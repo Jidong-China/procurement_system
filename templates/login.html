@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>采购管理系统 — 登录</title>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Noto Sans SC',sans-serif;background:#f5f2ed;min-height:100vh;display:flex;align-items:center;justify-content:center}
+.card{background:#fff;border-radius:14px;border:1px solid #e0dbd2;padding:40px 36px;width:380px;max-width:95vw}
+.brand{display:flex;align-items:center;gap:12px;margin-bottom:32px}
+.mark{width:38px;height:38px;background:#1a1714;border-radius:9px;display:flex;align-items:center;justify-content:center;color:#c54b1e;font-size:20px;font-weight:700;flex-shrink:0}
+.bn{font-size:15px;font-weight:700;color:#1a1714}
+.bs{font-size:11px;color:#a09890;margin-top:2px}
+.field{margin-bottom:16px}
+label{display:block;font-size:10px;color:#a09890;text-transform:uppercase;letter-spacing:.07em;font-weight:600;margin-bottom:5px}
+input{width:100%;background:#f5f2ed;border:1px solid #e0dbd2;color:#1a1714;padding:10px 13px;border-radius:7px;font-size:13px;font-family:inherit;outline:none}
+input:focus{border-color:#7a7469;background:#fff}
+.btn{width:100%;background:#1a1714;color:#fff;border:none;border-radius:7px;padding:11px;font-size:13px;font-family:inherit;font-weight:600;cursor:pointer;margin-top:8px}
+.btn:hover{opacity:.85}
+.err{color:#c54b1e;font-size:12px;margin-top:10px;text-align:center;min-height:18px}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="brand">
+    <div class="mark">¥</div>
+    <div><div class="bn">采购管理系统</div><div class="bs">Procurement Dashboard</div></div>
+  </div>
+  <div class="field"><label>用户名</label><input id="u" type="text" placeholder="请输入用户名" autocomplete="username"></div>
+  <div class="field"><label>密码</label><input id="p" type="password" placeholder="请输入密码" onkeydown="if(event.key==='Enter')login()"></div>
+  <button class="btn" onclick="login()">登 录</button>
+  <div class="err" id="err"></div>
+</div>
+<script>
+async function login(){
+  const u=document.getElementById('u').value.trim(),p=document.getElementById('p').value;
+  if(!u||!p){document.getElementById('err').textContent='请填写用户名和密码';return}
+  const btn=document.querySelector('.btn');btn.textContent='登录中…';btn.disabled=true;
+  try{
+    const r=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p})});
+    const d=await r.json();
+    if(d.ok)window.location='/dashboard';
+    else{document.getElementById('err').textContent=d.error||'登录失败';btn.textContent='登 录';btn.disabled=false;}
+  }catch{document.getElementById('err').textContent='网络错误';btn.textContent='登 录';btn.disabled=false;}
+}
+</script>
+</body></html>
