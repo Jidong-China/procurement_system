@@ -544,15 +544,22 @@ function handleXlsxUpload(input){
       const records=[];
       wb.SheetNames.forEach(name=>{
         if(!sheets.includes(name))return;
-        const raw=XLSX.utils.sheet_to_json(wb.Sheets[name],{raw:false,defval:''});
+        const raw=XLSX.utils.sheet_to_json(wb.Sheets[name],{raw:true,defval:''});
         raw.forEach(row=>{
-          const sup=(row['供应商']||'').trim();if(!sup)return;
+          const sup=String(row['供应商']||'').trim();if(!sup)return;
           const r={sheet:name};
           Object.entries(cm).forEach(([cn,key])=>{
-            let v=(row[cn]||'');if(typeof v==='string')v=v.trim();
-            if(key==='sign_date'||key==='due_date'){if(v){const m=String(v).match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})/);r[key]=m?`${m[1]}-${m[2].padStart(2,'0')}-${m[3].padStart(2,'0')}`:v;}else r[key]=null;}
-            else if(['total_amount','prepayment','tail_payment'].includes(key)){const n=parseFloat(String(v).replace(/,/g,''));r[key]=isNaN(n)?null:n;}
-            else r[key]=v||'';
+            let v=row[cn]!==undefined?row[cn]:'';
+            if(key==='sign_date'||key==='due_date'){
+              // handle Date objects from SheetJS (raw:true returns JS Date for date cells)
+              if(v instanceof Date){const yr=v.getFullYear(),mo=String(v.getMonth()+1).padStart(2,'0'),dy=String(v.getDate()).padStart(2,'0');r[key]=`${yr}-${mo}-${dy}`;}
+              else if(v){const s=String(v).trim();const m=s.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})/);r[key]=m?`${m[1]}-${m[2].padStart(2,'0')}-${m[3].padStart(2,'0')}`:s;}
+              else r[key]=null;
+            } else if(['total_amount','prepayment','tail_payment'].includes(key)){
+              // raw:true gives numbers directly; fallback parse for string values
+              const n=typeof v==='number'?v:parseFloat(String(v).replace(/,/g,''));
+              r[key]=isNaN(n)?null:n;
+            } else {r[key]=v!==''?String(v).trim():'';}
           });
           records.push(r);
         });
