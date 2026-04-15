@@ -458,7 +458,16 @@ function renderP(){
     if(fs)return pst(r)===fs;return true;
   });
   filtP.sort((a,b)=>{
-    if(srt==='due_asc'||srt==='due_desc'){const da=pd(a.due_date),db=pd(b.due_date);if(!da&&!db)return 0;if(!da)return 1;if(!db)return -1;return srt==='due_asc'?da-db:db-da;}
+    if(srt==='due_asc'||srt==='due_desc'){
+      const da=pd(a.due_date),db=pd(b.due_date);
+      const today=new Date();today.setHours(0,0,0,0);
+      // 分组：未来(0) > 已过期(1) > 无日期(2)
+      const grp=d=>{if(!d)return 2;d=new Date(d);d.setHours(0,0,0,0);return d>=today?0:1;};
+      const ga=grp(da),gb=grp(db);
+      if(ga!==gb)return srt==='due_asc'?ga-gb:gb-ga;
+      if(!da&&!db)return 0;if(!da)return 1;if(!db)return -1;
+      return srt==='due_asc'?da-db:db-da;
+    }
     return(b.total_amount||0)-(a.total_amount||0);
   });
   let st=0,ss2=0,sp2=0;filtP.forEach(r=>{st+=r.total_amount||0;ss2+=r.tail_payment||0;sp2+=r.prepayment||0;});
