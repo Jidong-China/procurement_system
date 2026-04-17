@@ -193,7 +193,7 @@ tr:last-child td{border-bottom:none}
       <option value="unknown">日期未定</option><option value="paid">已付款</option>
     </select>
     <select id="pSrt" class="sel" onchange="renderP()">
-      <option value="due_desc">到期↓</option><option value="due_asc">到期↑</option><option value="amt_desc">金额↓</option>
+      <option value="due_asc">到期↑</option><option value="due_desc">到期↓</option><option value="amt_desc">金额↓</option>
     </select>
     <button class="cbtn" onclick="resetP()">重置</button>
   </div>
@@ -433,7 +433,7 @@ async function loadP(){
 
 function calcStats(){
   let u=0,w=0,n=0,ua=0,wa=0,na=0,ta=0;
-  allP.filter(r=>!r.is_paid).forEach(r=>{
+  allP.forEach(r=>{
     const s=pst(r),amt=(r.tail_payment||r.total_amount||0);ta+=amt;
     if(s==='urgent'){u++;ua+=amt;}else if(s==='warning'){w++;wa+=amt;}else if(s==='normal'){n++;na+=amt;}
   });
@@ -445,7 +445,7 @@ function calcStats(){
 
 function qFilter(s){qf=s==='all'?'':s;document.getElementById('pSta').value='';document.querySelectorAll('.sc').forEach(el=>el.classList.remove('active'));if(s!=='all')document.querySelector('.s'+s[0]).classList.add('active');renderP();}
 
-function resetP(){qf='';['psrch','pSup','pCon','pPer','pSta'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});document.getElementById('pSrt').value='due_desc';document.querySelectorAll('.sc').forEach(el=>el.classList.remove('active'));renderP();}
+function resetP(){qf='';['psrch','pSup','pCon','pPer','pSta'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});document.getElementById('pSrt').value='due_asc';document.querySelectorAll('.sc').forEach(el=>el.classList.remove('active'));renderP();}
 
 function renderP(){
   const q=document.getElementById('psrch').value.toLowerCase();
