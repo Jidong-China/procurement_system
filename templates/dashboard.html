@@ -544,21 +544,22 @@ function handleXlsxUpload(input){
       const records=[];
       wb.SheetNames.forEach(name=>{
         if(!sheets.includes(name))return;
-        const raw=XLSX.utils.sheet_to_json(wb.Sheets[name],{raw:true,defval:''});
+        // Use raw:false so all values come as strings/formatted — more consistent across Excel formats
+        const raw=XLSX.utils.sheet_to_json(wb.Sheets[name],{raw:false,defval:''});
         raw.forEach(row=>{
           const sup=String(row['供应商']||'').trim();if(!sup)return;
           const r={sheet:name};
           Object.entries(cm).forEach(([cn,key])=>{
             let v=row[cn]!==undefined?row[cn]:'';
+            if(typeof v==='string') v=v.trim();
             if(key==='sign_date'||key==='due_date'){
-              // handle Date objects from SheetJS (raw:true returns JS Date for date cells)
-              if(v instanceof Date){const yr=v.getFullYear(),mo=String(v.getMonth()+1).padStart(2,'0'),dy=String(v.getDate()).padStart(2,'0');r[key]=`${yr}-${mo}-${dy}`;}
-              else if(v){const s=String(v).trim();const m=s.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})/);r[key]=m?`${m[1]}-${m[2].padStart(2,'0')}-${m[3].padStart(2,'0')}`:s;}
+              if(v){const s=String(v).trim();const m=s.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})/);r[key]=m?`${m[1]}-${m[2].padStart(2,'0')}-${m[3].padStart(2,'0')}`:s;}
               else r[key]=null;
             } else if(['total_amount','prepayment','tail_payment'].includes(key)){
-              // raw:true gives numbers directly; fallback parse for string values
-              const n=typeof v==='number'?v:parseFloat(String(v).replace(/,/g,''));
-              r[key]=isNaN(n)?null:n;
+              // Strip all formatting: commas, spaces, currency symbols, then parse
+              const cleaned=String(v).replace(/[,，\s¥￥]/g,'').trim();
+              const n=parseFloat(cleaned);
+              r[key]=(cleaned!==''&&!isNaN(n))?n:null;
             } else {r[key]=v!==''?String(v).trim():'';}
           });
           records.push(r);
@@ -566,7 +567,11 @@ function handleXlsxUpload(input){
       });
       const res=await fetch('/api/payables/upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({records})});
       const d=await res.json();
-      if(d.ok){toast(`✓ 台账已更新，共 ${d.count} 条`);loadP();}else toast('上传失败：'+d.error);
+      // debug: check how many records have amounts
+      const withAmt=records.filter(r=>r.total_amount!=null).length;
+      const sample=records.find(r=>r.total_amount!=null);
+      console.log('Upload debug - records:',records.length,'with amount:',withAmt,'sample:',sample);
+      if(d.ok){toast(`✓ 台账已更新，共 ${d.count} 条（有金额${withAmt}条）`);loadP();}else toast('上传失败：'+d.error);
     }catch(err){toast('解析失败：'+err.message);}
   };
   reader.readAsArrayBuffer(file);input.value='';
