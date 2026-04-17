@@ -193,7 +193,7 @@ tr:last-child td{border-bottom:none}
       <option value="unknown">日期未定</option><option value="paid">已付款</option>
     </select>
     <select id="pSrt" class="sel" onchange="renderP()">
-      <option value="due_asc">到期↑</option><option value="due_desc">到期↓</option><option value="amt_desc">金额↓</option>
+      <option value="due_desc">到期↓</option><option value="due_asc">到期↑</option><option value="amt_desc">金额↓</option>
     </select>
     <button class="cbtn" onclick="resetP()">重置</button>
   </div>
@@ -445,7 +445,7 @@ function calcStats(){
 
 function qFilter(s){qf=s==='all'?'':s;document.getElementById('pSta').value='';document.querySelectorAll('.sc').forEach(el=>el.classList.remove('active'));if(s!=='all')document.querySelector('.s'+s[0]).classList.add('active');renderP();}
 
-function resetP(){qf='';['psrch','pSup','pCon','pPer','pSta'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});document.getElementById('pSrt').value='due_asc';document.querySelectorAll('.sc').forEach(el=>el.classList.remove('active'));renderP();}
+function resetP(){qf='';['psrch','pSup','pCon','pPer','pSta'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});document.getElementById('pSrt').value='due_desc';document.querySelectorAll('.sc').forEach(el=>el.classList.remove('active'));renderP();}
 
 function renderP(){
   const q=document.getElementById('psrch').value.toLowerCase();
@@ -460,13 +460,8 @@ function renderP(){
   filtP.sort((a,b)=>{
     if(srt==='due_asc'||srt==='due_desc'){
       const da=pd(a.due_date),db=pd(b.due_date);
-      const now=new Date();now.setHours(0,0,0,0);
-      // 未来到期排最前，已过期排后，无日期排最末
-      const grp=d=>{if(!d)return 2;const dd=new Date(d);dd.setHours(0,0,0,0);return dd>=now?0:1;};
-      const ga=grp(da),gb=grp(db);
-      if(ga!==gb)return ga-gb;
       if(!da&&!db)return 0;if(!da)return 1;if(!db)return -1;
-      return srt==='due_asc'?da-db:db-da;
+      return srt==='due_desc'?db-da:da-db;
     }
     return(b.total_amount||0)-(a.total_amount||0);
   });
