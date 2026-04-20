@@ -203,7 +203,10 @@ tr:last-child td{border-bottom:none}
       <table id="ptable">
         <thead><tr>
           <th>状态</th><th>负责人</th><th>供应商</th><th>合同编号</th>
-          <th>合同总额</th><th>尾款应付</th><th>付款方式</th><th>到期日</th><th>备注（可编辑）</th>
+          <th>合同总额</th><th>付款方式</th>
+          <th>预付款</th><th style="font-size:9px">预付%</th>
+          <th>尾款</th><th style="font-size:9px">尾款%</th>
+          <th>到期日</th><th>备注（可编辑）</th>
           {% if user.role == 'admin' %}<th>操作</th>{% endif %}
         </tr></thead>
         <tbody id="ptbody"></tbody>
@@ -498,17 +501,27 @@ function renderP(){
       <td><span class="tag">${r.sheet}</span></td>
       <td><div class="supplier-name">${r.supplier}</div><div class="company-sub">${r.our_company||''}</div></td>
       <td><span class="mono">${(r.contract_no||'—').slice(0,22)}</span></td>
-      <td>${fa(r.total_amount)}</td><td>${fa(r.tail_payment)}</td>
-      <td style="font-size:11px;color:var(--ink3);max-width:130px">${(r.payment_terms||'—').replace(/\n/g,'·').slice(0,26)}</td>
+      <td>${fa(r.total_amount)}</td>
+      <td style="font-size:11px;color:var(--ink3);max-width:120px">${(r.payment_terms||'—').replace(/\n/g,'·').slice(0,24)}</td>
+      <td>
+        ${r.prepayment_paid?'<span style="font-size:10px;color:var(--teal)">✓已付</span>':fa(r.prepayment)}
+        ${IS_ADMIN&&r.prepayment&&!r.prepayment_paid?`<br><button onclick="event.stopPropagation();markSub(${r.id},'prepayment')" style="font-size:9px;padding:1px 5px;margin-top:2px;border-radius:3px;border:1px solid var(--sand3);background:var(--sand);cursor:pointer">标记已付</button>`:''}
+      </td>
+      <td style="font-size:11px;color:var(--ink4)">${r.total_amount&&r.prepayment?Math.round(r.prepayment/r.total_amount*100)+'%':'—'}</td>
+      <td>
+        ${r.tail_paid?'<span style="font-size:10px;color:var(--teal)">✓已付</span>':fa(r.tail_payment)}
+        ${IS_ADMIN&&r.tail_payment&&!r.tail_paid?`<br><button onclick="event.stopPropagation();markSub(${r.id},'tail')" style="font-size:9px;padding:1px 5px;margin-top:2px;border-radius:3px;border:1px solid var(--sand3);background:var(--sand);cursor:pointer">标记已付</button>`:''}
+      </td>
+      <td style="font-size:11px;color:var(--ink4)">${r.total_amount&&r.tail_payment?Math.round(r.tail_payment/r.total_amount*100)+'%':'—'}</td>
       <td style="white-space:nowrap">${fd(r.due_date)}</td>
-      <td onclick="event.stopPropagation()" style="max-width:200px">
+      <td onclick="event.stopPropagation()" style="max-width:180px">
         ${IS_ADMIN?`<span class="editable-note" onclick="editNote(${r.id},this)" title="点击编辑备注"
           data-raw="${r.notes||''}"
           style="font-size:11px;color:var(--ink3);cursor:pointer;display:block;min-height:18px;
           border-bottom:1px dashed var(--sand3);padding-bottom:2px">${r.notes||'<span style=color:var(--sand3)>点击添加备注</span>'}</span>`
         :`<span style="font-size:11px;color:var(--ink3)">${r.notes||'—'}</span>`}
       </td>
-      ${IS_ADMIN?`<td><button onclick="event.stopPropagation();qMarkPaid(${r.id},${r.is_paid?0:1})" style="font-size:10px;padding:3px 8px;border-radius:4px;border:1px solid var(--sand3);background:var(--sand);cursor:pointer">${r.is_paid?'撤销':'标记已付'}</button></td>`:''}
+      ${IS_ADMIN?`<td><button onclick="event.stopPropagation();qMarkPaid(${r.id},${r.is_paid?0:1})" style="font-size:10px;padding:3px 8px;border-radius:4px;border:1px solid var(--sand3);background:var(--sand);cursor:pointer">${r.is_paid?'撤销全款':'全款已付'}</button></td>`:''}
     </tr>`).join('');
   // pagination
   const tp=Math.ceil(total/PGS);let h='';
@@ -669,6 +682,24 @@ function editNote(id, el){
   }
   input.addEventListener('blur',save);
   input.addEventListener('keydown',e=>{if(e.key==='Enter')input.blur();if(e.key==='Escape'){input.blur();}});
+}
+
+async function markSub(id, type){
+  // 标记预付款或尾款已付
+  const r = allP.find(x=>x.id===id);
+  if(!r) return;
+  const field = type==='prepayment' ? 'prepayment_paid' : 'tail_paid';
+  const newVal = r[field] ? 0 : 1;
+  const res = await fetch(`/api/payables/${id}/subpaid`,{
+    method:'PUT', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({type, paid: newVal})
+  });
+  const d = await res.json();
+  if(d.ok){
+    r[field] = newVal;
+    renderP();
+    toast(newVal ? `✓ ${type==='prepayment'?'预付款':'尾款'}已标记付款` : '已撤销');
+  } else toast('操作失败：'+d.error);
 }
 
 async function qMarkPaid(id,val){
