@@ -545,7 +545,7 @@ function showDetail(i){
     <dl class="dl"><dt>供应商</dt><dd style="font-weight:600">${r.supplier}</dd></dl>
     <dl class="dl"><dt>我方公司</dt><dd>${r.our_company||'—'}</dd></dl>
     <dl class="dl"><dt>合同编号</dt><dd class="mono">${r.contract_no||'—'}</dd></dl>
-    <dl class="dl"><dt>签订日期</dt><dd>${r.sign_date||'—'}</dd></dl>
+    <dl class="dl"><dt>签订日期</dt><dd>${IS_ADMIN?`<span class="editable-field" onclick="editField(${r.id},'sign_date',this,'date')" data-raw="${r.sign_date||''}" style="cursor:pointer;border-bottom:1px dashed var(--sand3);padding-bottom:1px">${r.sign_date||'点击填写'}</span>`:r.sign_date||'—'}</dd></dl>
     <hr class="hr">
     <dl class="dl"><dt>合同总额</dt><dd>${fa(r.total_amount)}</dd></dl>
     <dl class="dl"><dt>付款方式</dt><dd style="white-space:pre-line;font-size:11px">${r.payment_terms||'—'}</dd></dl>
@@ -594,7 +594,7 @@ function showDetail(i){
       <button onclick="savePayment()" style="margin-top:10px;width:100%;background:var(--ink);color:#fff;border:none;border-radius:5px;padding:7px;font-size:12px;font-family:inherit;cursor:pointer">保存金额 / 账期</button>
     </div>`:''}
     <hr class="hr">
-    <dl class="dl"><dt>到期日期</dt><dd>${r.due_date||'—'}</dd></dl>
+    <dl class="dl"><dt>到期日期</dt><dd>${IS_ADMIN?`<span class="editable-field" onclick="editField(${r.id},'due_date',this,'date')" data-raw="${r.due_date||''}" style="cursor:pointer;border-bottom:1px dashed var(--sand3);padding-bottom:1px">${r.due_date||'点击填写'}</span>`:r.due_date||'—'}</dd></dl>
     <dl class="dl"><dt>跟进备注</dt><dd style="white-space:pre-line;color:var(--ink2)">${r.notes||'—'}</dd></dl>
     ${r.is_paid?`<dl class="dl"><dt>付款时间</dt><dd style="color:var(--teal)">${r.paid_at||'已付'}</dd></dl>`:''}`;
   if(IS_ADMIN){const b=document.getElementById('paidBtn');b.textContent=r.is_paid?'撤销已付状态':'✓ 标记为已付款';b.style.cssText=r.is_paid?'background:var(--sand);color:var(--ink2);border-color:var(--sand3)':'background:var(--ink);color:#fff;border-color:var(--ink)';}
@@ -606,6 +606,30 @@ async function togglePaid(){
   if(!curDetail)return;const val=curDetail.is_paid?0:1;
   const r=await fetch(`/api/payables/${curDetail.id}/paid`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({is_paid:val})});
   if((await r.json()).ok){toast(val?'✓ 已标记已付款':'已撤销');closeOv('detailOv');loadP();}
+}
+
+function editField(id, field, el, type){
+  const cur = el.dataset.raw || '';
+  const input = document.createElement('input');
+  input.type = type==='date'?'date':'text';
+  if(type==='date'&&cur) input.value=cur;
+  else input.value=cur;
+  input.style.cssText='font-size:12px;border:1px solid var(--rust);border-radius:3px;padding:2px 6px;font-family:inherit;outline:none;width:140px';
+  el.replaceWith(input); input.focus();
+  async function save(){
+    const val=input.value.trim();
+    const body={[field]:val||null};
+    const r=await fetch(`/api/payables/${id}/fields`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    if((await r.json()).ok){
+      const rec=allP.find(x=>x.id===id);
+      if(rec) rec[field]=val||null;
+      if(curDetail&&curDetail.id===id) curDetail[field]=val||null;
+      calcStats(); renderP();
+      toast('✓ 已保存');
+    }
+  }
+  input.addEventListener('blur',save);
+  input.addEventListener('keydown',e=>{if(e.key==='Enter')input.blur();if(e.key==='Escape')input.blur();});
 }
 
 function syncActualPayDate(){
