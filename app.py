@@ -417,6 +417,22 @@ def api_mark_subpaid(pid):
         return jsonify({'error': '无效类型'}), 400
     return jsonify({'ok': True})
 
+@app.route('/api/payables/<int:pid>/fields', methods=['PUT'])
+@admin_required
+def api_update_fields(pid):
+    d = request.json
+    allowed = ['sign_date','due_date','contract_no','our_company']
+    sets, vals = [], []
+    for k in allowed:
+        if k in d:
+            sets.append(f"{k}=?")
+            vals.append(d[k] or None)
+    if not sets:
+        return jsonify({'error':'无有效字段'}), 400
+    vals.append(pid)
+    execute(f"UPDATE payables SET {','.join(sets)},updated_at=datetime('now') WHERE id=?", tuple(vals))
+    return jsonify({'ok': True})
+
 @app.route('/api/payables/<int:pid>/notes', methods=['PUT'])
 @admin_required
 def api_update_notes(pid):
@@ -674,8 +690,9 @@ def import_data_now():
 def seed_payables():
     if request.args.get('k') != os.environ.get('ADMIN_PASSWORD','admin123456'):
         return 'forbidden', 403
-    import json as _j
-    records = _j.loads('[{"sheet": "田少东", "sign_date": "2026-03-02", "contract_no": "TSD2602060KE01", "our_company": "浙江西创进出口有限公司", "supplier": "红旗集团温州变压器有限公司", "total_amount": 95000.0, "payment_terms": "20%预付款\n提单日起90天内   75%\n验收合格14月后   5%", "prepayment": 19000.0, "tail_payment": 76000.0, "due_date": "2026-03-26", "due_date_raw": "2026-03-26 00:00:00", "notes": ""}, {"sheet": "田少东", "sign_date": "2026-03-02", "contract_no": "TSD2602058BI02", "our_company": "宁波宏旗电气有限公司", "supplier": "江苏长远电缆有限公司", "total_amount": 2744235.0, "payment_terms": "20%预付款\n验货合格后80%尾款", "prepayment": 548847.0, "tail_payment": 2195388.0, "due_date": "2026-03-18", "due_date_raw": "2026-03-18 00:00:00", "notes": ""}, {"sheet": "田少东", "sign_date": "2026-03-05", "contract_no": "", "our_company": "", "supplier": "浙江信达电气有限公司", "total_amount": 621695.0, "payment_terms": "30%预付款\n验货合格后70%尾款", "prepayment": 186508.5, "tail_payment": 435186.5, "due_date": "2026-03-31", "due_date_raw": "2026-03-31 00:00:00", "notes": ""}, {"sheet": "田少东", "sign_date": "2026-03-12", "contract_no": "", "our_company": "", "supplier": "浙江美至电气有限公司", "total_amount": 263645.5, "payment_terms": "20%预付款\n验货合格后80%尾款", "prepayment": 52729.100000000006, "tail_payment": 210916.40000000002, "due_date": "2026-03-31", "due_date_raw": "2026-03-31 00:00:00", "notes": ""}, {"sheet": "田少东", "sign_date": "2026-03-02", "contract_no": "TSD2602059BI02", "our_company": "宁波宏旗电气有限公司", "supplier": "河南格朗特电缆有限公司", "total_amount": 229250.0, "payment_terms": "20%预付款\n验货合格后80%尾款", "prepayment": 45850.0, "tail_payment": 183400.0, "due_date": "2026-03-20", "due_date_raw": "2026-03-20 00:00:00", "notes": ""}, {"sheet": "田少东", "sign_date": "2026-03-04", "contract_no": "", "our_company": "", "supplier": "河北博达光电科技有限公司", "total_amount": 6480.0, "payment_terms": "20%预付款\n验货合格后80%尾款", "prepayment": 1296.0, "tail_payment": 5184.0, "due_date": "2026-03-31", "due_date_raw": "2026-03-31 00:00:00", "notes": ""}, {"sheet": "田少东", "sign_date": null, "contract_no": "", "our_company": "", "supplier": "河北颐鹏线路器材制造有限公司", "total_amount": 14400.0, "payment_terms": "20%预付款\n验货合格后80%尾款", "prepayment": 2880.0, "tail_payment": 11520.0, "due_date": "2026-03-31", "due_date_raw": "2026-03-31 00:00:00", "notes": ""}, {"sheet": "田少东", "sign_date": null, "contract_no": "", "our_company": "", "supplier": "浙江思美克电力设备有限公司", "total_amount": 53366.8, "payment_terms": "20%预付款\n验货合格后80%尾款", "prepayment": 10673.36, "tail_payment": 42693.44, "due_date": "2026-03-31", "due_date_raw": "2026-03-31 00:00:00", "notes": ""}, {"sheet": "田少东", "sign_date": null, "contract_no": "", "our_company": "", "supplier": "湖南醴陵宇建电瓷电器有限公司", "total_amount": 600.0, "payment_terms": "100%定金", "prepayment": 600.0, "tail_payment": null, "due_date": "2026-03-31", "due_date_raw": "2026-03-31 00:00:00", "notes": ""}, {"sheet": "田少东", "sign_date": null, "contract_no": "", "our_company": "", "supplier": "河北冠华电气设备有限公司", "total_amount": 4396.0, "payment_terms": "30%预付款\n验货合格后70%尾款", "prepayment": 1318.8, "tail_payment": 3077.2, "due_date": "2026-03-31", "due_date_raw": "2026-03-31 00:00:00", "notes": ""}, {"sheet": "赵虹", "sign_date": "2026-04-17", "contract_no": "ZHX2604161NG03", "our_company": "浙江西创电力有限公司", "supplier": "浙江通致电气有限公司", "total_amount": 91878.0, "payment_terms": "20%预付款\n验货合格后80%尾款", "prepayment": 18375.600000000002, "tail_payment": 73502.40000000001, "due_date": "2026-04-27", "due_date_raw": "2026-04-27 00:00:00", "notes": ""}]')
+    import json as _j, base64 as _b, gzip as _g
+    raw = _b.b64decode('H4sIAM445mkC/9WYW4vrNhCA/0oI7NtZMyNpRqPzWFraUuhL+1DalOCL3C5knZC1KYfS/16NE+/mbJx0E3JMNwTFWGNpMt/c5N/+nj/9GWM7/zibLzpPFhYdlYiLzkUs5x9m86eHP5pllbdRRQwYvgd7D0anynXTbvOyXTZrnfz5p68NgwGGH74BVIF1t12W68dN3nzabcAVhTSWVC86CT6NZLBI13WVRsI6T6ONNsl4SJKBSRVCLvV+Lb1C3WazeojbvcoxN0maKq/SJSc5jnonmvQ8VVXUJyvRUXQPZjm3ertu89Uyf1x3jRolEABkkCY2+afH2LTLNm4fn3a2uEtLiDi1lW7AhY2LJv3aSpe1RKpYTKNU3ge9F3qlUGg2m3m6U+mQS6lyVlV3oOuILdH1Skp/LyZpulPtNtu41yNpgGHQrc0fVsuXCc/DRNXFI3aG5wczy23+1+ezM4CP/VfFmnUb+387/+fD7Av4CslX3+8EjnyFCkH1FaWZruuBctpYDTuY6E1esvc4U6YxkPpd8rhyWMvXwBf4hPHOGUsXesWOs1TGH3Le8RV9iMok2IsfkSaXFvRjqA2G5NdyEjbKOdgoN4dNI7BH8I4gOkgNro6oiIr4VtyvELFBDicI2WsI+f8ghJKUkoyOCTmb4p37mTFAFs8BsnhrQGhuAcjXkiwhWNsrARm27Ki3ykQhZLwJGcLzh8eCCQJy5p5lzP8E2vkUGiZKoYXtq5ofzM4edS3jw7WJ1ARDMGEedSQ0WjFRrDtXMuFsyYSb83ZXB+mekpJJSPIhixK6F0qhUq8wApdkVCdTkkITeAxUyqXuJKaJwrLpVqsb4AmiLWGITvNpLLQnqWL90qH2SIy2hSFF+QWo0DmYkpURGQ8qJAPvGdZBwWPAaih7KZaKIZbIBD2+FH2MBfAXYCJrmTOZLqSAvc3sSN1zhoPNnHu/pCLxUJsCFk7t76mveWqoqMfKfe5z9XP9u/AoyKeCKjUVavki5Lp7hUeW5/Fj2v4Pv/9MRpj3B173ql2/Kiyc3Wf+iRp3i9IH4Ss4FrzPvnD/J5U6qbAPJzoBd49+pBP49btfUufnkPHHb8Fe9KLlMGu9ufM7WCsA5n3j765s/AOKlykbCbGeMobPevrX70ssgTlo+3EUu7s3/jR2nT2F/fd/AV65fj5mEwAA')
+    records = _j.loads(_g.decompress(raw))
     db = get_db()
     db.execute("DELETE FROM payables")
     for r in records:
