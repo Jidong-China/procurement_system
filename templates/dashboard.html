@@ -203,7 +203,7 @@ tr:last-child td{border-bottom:none}
       <table id="ptable">
         <thead><tr>
           <th>状态</th><th>负责人</th><th>供应商</th><th>合同编号</th>
-          <th>合同总额</th><th>尾款应付</th><th>付款方式</th><th>到期日</th><th>跟进备注</th>
+          <th>合同总额</th><th>尾款应付</th><th>付款方式</th><th>到期日</th><th>备注（可编辑）</th>
           {% if user.role == 'admin' %}<th>操作</th>{% endif %}
         </tr></thead>
         <tbody id="ptbody"></tbody>
@@ -275,11 +275,12 @@ tr:last-child td{border-bottom:none}
   <div class="settings-card" style="max-width:640px">
     <h3>⏰ 日报推送设定</h3>
     <div class="info-box">每日定时向指定邮箱发送预警日报，包含 <strong>3天内</strong> 与 <strong>7天内</strong> 到期的应付款合同明细及金额合计。<br>需在 Render 环境变量中配置 <code>SMTP_HOST / SMTP_PORT / SMTP_USER / SMTP_PASS</code>。</div>
-    <div class="fg"><label class="flbl">收件邮箱（多个用逗号分隔）</label><input id="seEmails" type="text" class="finp" placeholder="finance@company.com, boss@company.com"></div>
+    <div class="fg"><label class="flbl">收件邮箱（多个用逗号分隔）</label><input id="seEmails" type="text" class="finp" placeholder="jidong@seatrustpower.com"></div>
     <div class="fr">
-      <div class="fg"><label class="flbl">每日发送时间</label><input id="seTime" type="time" value="08:30" class="finp"></div>
-      <div class="fg"><label class="flbl">日报标题</label><input id="seTitle" type="text" value="采购应付款每日预警日报" class="finp"></div>
+      <div class="fg"><label class="flbl">早间发送时间</label><input id="seTime" type="time" value="08:00" class="finp"></div>
+      <div class="fg"><label class="flbl">下午发送时间</label><input id="seTime2" type="time" value="16:30" class="finp"></div>
     </div>
+    <div class="fg"><label class="flbl">日报标题</label><input id="seTitle" type="text" value="采购应付款每日预警日报" class="finp"></div>
     <div style="margin-bottom:18px;display:flex;align-items:center;gap:8px">
       <input type="checkbox" id="seEnabled" checked>
       <label for="seEnabled" style="font-size:12px;color:var(--ink3);cursor:pointer">启用定时推送</label>
@@ -399,15 +400,33 @@ function switchTab(name, el){
 // ── UTILS ──
 function pd(s){if(!s)return null;const m=String(s).match(/^(\d{4})-(\d{2})-(\d{2})/);return m?new Date(s.slice(0,10)):null;}
 function du(s){const d=pd(s);if(!d)return null;const t=new Date();t.setHours(0,0,0,0);d.setHours(0,0,0,0);return Math.ceil((d-t)/86400000);}
+function actualPayDate(r){
+  // 有账期：实际付款日 = 交货日 + 账期天数
+  if(!r.due_date) return null;
+  const d = pd(r.due_date);
+  if(!d) return null;
+  if(r.payment_days && r.payment_days > 0){
+    const pay = new Date(d);
+    pay.setDate(pay.getDate() + r.payment_days);
+    return pay;
+  }
+  return d;
+}
+function duActual(r){
+  const d = actualPayDate(r);
+  if(!d) return null;
+  const t = new Date(); t.setHours(0,0,0,0); d.setHours(0,0,0,0);
+  return Math.ceil((d-t)/86400000);
+}
 function pst(r){
   if(r.is_paid)return'paid';
-  const n=du(r.due_date);
+  const n=duActual(r);
   if(n===null)return'unknown';
   if(n<0)return'past';if(n<=3)return'urgent';if(n<=7)return'warning';return'normal';
 }
 function badge(r){
   if(r.is_paid)return'<span class="b-paid">✓ 已付款</span>';
-  const n=du(r.due_date),s=pst(r);
+  const n=duActual(r),s=pst(r);
   const label=n!==null?Math.abs(n)+(n<0?'天前':'天后'):'待确认';
   const cls={urgent:'b-urg',warning:'b-warn',normal:'b-ok',past:'b-gray',unknown:'b-gray'}[s];
   return`<span class="${cls}">${label}</span>`;
@@ -482,7 +501,13 @@ function renderP(){
       <td>${fa(r.total_amount)}</td><td>${fa(r.tail_payment)}</td>
       <td style="font-size:11px;color:var(--ink3);max-width:130px">${(r.payment_terms||'—').replace(/\n/g,'·').slice(0,26)}</td>
       <td style="white-space:nowrap">${fd(r.due_date)}</td>
-      <td style="font-size:11px;color:var(--ink3);max-width:180px">${(r.notes||'').slice(0,50)}</td>
+      <td onclick="event.stopPropagation()" style="max-width:200px">
+        ${IS_ADMIN?`<span class="editable-note" onclick="editNote(${r.id},this)" title="点击编辑备注"
+          data-raw="${r.notes||''}"
+          style="font-size:11px;color:var(--ink3);cursor:pointer;display:block;min-height:18px;
+          border-bottom:1px dashed var(--sand3);padding-bottom:2px">${r.notes||'<span style=color:var(--sand3)>点击添加备注</span>'}</span>`
+        :`<span style="font-size:11px;color:var(--ink3)">${r.notes||'—'}</span>`}
+      </td>
       ${IS_ADMIN?`<td><button onclick="event.stopPropagation();qMarkPaid(${r.id},${r.is_paid?0:1})" style="font-size:10px;padding:3px 8px;border-radius:4px;border:1px solid var(--sand3);background:var(--sand);cursor:pointer">${r.is_paid?'撤销':'标记已付'}</button></td>`:''}
     </tr>`).join('');
   // pagination
@@ -499,7 +524,7 @@ function goPg(p){pg=p;renderP();}
 
 function showDetail(i){
   const r=filtP[i];if(!r)return;curDetail=r;
-  const n=du(r.due_date);
+  const n=duActual(r);
   document.getElementById('detailBody').innerHTML=`
     <div style="margin-bottom:12px">${badge(r)}${n!==null?` <span style="font-size:11px;color:var(--ink4);margin-left:6px">剩余 ${n} 天</span>`:''}</div>
     <hr class="hr">
@@ -510,21 +535,140 @@ function showDetail(i){
     <dl class="dl"><dt>签订日期</dt><dd>${r.sign_date||'—'}</dd></dl>
     <hr class="hr">
     <dl class="dl"><dt>合同总额</dt><dd>${fa(r.total_amount)}</dd></dl>
-    <dl class="dl"><dt>预付款</dt><dd>${fa(r.prepayment)}</dd></dl>
-    <dl class="dl"><dt>尾款应付</dt><dd>${fa(r.tail_payment)}</dd></dl>
     <dl class="dl"><dt>付款方式</dt><dd style="white-space:pre-line;font-size:11px">${r.payment_terms||'—'}</dd></dl>
+    ${IS_ADMIN?`
+    <div style="margin:10px 0;background:var(--sand);border-radius:8px;padding:12px">
+      <div style="font-size:10px;color:var(--ink4);text-transform:uppercase;letter-spacing:.07em;margin-bottom:10px;font-weight:600">预付款 / 尾款 / 账期</div>
+      <div id="actual_pay_hint" style="font-size:11px;color:var(--rust);margin-bottom:8px;min-height:16px"></div>
+      <div style="display:grid;grid-template-columns:1fr 80px 1fr 80px;gap:6px;align-items:center;font-size:12px">
+        <div>
+          <div style="font-size:10px;color:var(--ink4);margin-bottom:3px">预付款金额</div>
+          <input id="d_pre_amt" type="number" placeholder="金额" value="${r.prepayment||''}"
+            oninput="syncPayment('pre','amt')"
+            style="width:100%;background:#fff;border:1px solid var(--sand3);color:var(--ink);padding:6px 8px;border-radius:5px;font-size:12px;font-family:inherit;outline:none">
+        </div>
+        <div style="text-align:center">
+          <div style="font-size:10px;color:var(--ink4);margin-bottom:3px">比例</div>
+          <input id="d_pre_pct" type="number" placeholder="%" min="0" max="100" value="${r.total_amount&&r.prepayment?Math.round(r.prepayment/r.total_amount*10000)/100:''}"
+            oninput="syncPayment('pre','pct')"
+            style="width:100%;background:#fff;border:1px solid var(--sand3);color:var(--ink);padding:6px 8px;border-radius:5px;font-size:12px;font-family:inherit;outline:none;text-align:center">
+        </div>
+        <div>
+          <div style="font-size:10px;color:var(--ink4);margin-bottom:3px">尾款金额</div>
+          <input id="d_tail_amt" type="number" placeholder="金额" value="${r.tail_payment||''}"
+            oninput="syncPayment('tail','amt')"
+            style="width:100%;background:#fff;border:1px solid var(--sand3);color:var(--ink);padding:6px 8px;border-radius:5px;font-size:12px;font-family:inherit;outline:none">
+        </div>
+        <div style="text-align:center">
+          <div style="font-size:10px;color:var(--ink4);margin-bottom:3px">比例</div>
+          <input id="d_tail_pct" type="number" placeholder="%" min="0" max="100" value="${r.total_amount&&r.tail_payment?Math.round(r.tail_payment/r.total_amount*10000)/100:''}"
+            oninput="syncPayment('tail','pct')"
+            style="width:100%;background:#fff;border:1px solid var(--sand3);color:var(--ink);padding:6px 8px;border-radius:5px;font-size:12px;font-family:inherit;outline:none;text-align:center">
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:8px;align-items:center">
+        <div>
+          <div style="font-size:10px;color:var(--ink4);margin-bottom:3px">账期（天）</div>
+          <input id="d_pay_days" type="number" placeholder="如：90" min="0" value="${r.payment_days||''}"
+            oninput="syncActualPayDate()"
+            style="width:100%;background:#fff;border:1px solid var(--sand3);color:var(--ink);padding:6px 8px;border-radius:5px;font-size:12px;font-family:inherit;outline:none">
+        </div>
+        <div>
+          <div style="font-size:10px;color:var(--ink4);margin-bottom:3px">实际付款日</div>
+          <div id="d_actual_pay" style="font-size:12px;font-weight:600;color:var(--rust);padding:6px 0"></div>
+        </div>
+      </div>
+      <button onclick="savePayment()" style="margin-top:10px;width:100%;background:var(--ink);color:#fff;border:none;border-radius:5px;padding:7px;font-size:12px;font-family:inherit;cursor:pointer">保存金额 / 账期</button>
+    </div>`:''}
     <hr class="hr">
     <dl class="dl"><dt>到期日期</dt><dd>${r.due_date||'—'}</dd></dl>
     <dl class="dl"><dt>跟进备注</dt><dd style="white-space:pre-line;color:var(--ink2)">${r.notes||'—'}</dd></dl>
     ${r.is_paid?`<dl class="dl"><dt>付款时间</dt><dd style="color:var(--teal)">${r.paid_at||'已付'}</dd></dl>`:''}`;
   if(IS_ADMIN){const b=document.getElementById('paidBtn');b.textContent=r.is_paid?'撤销已付状态':'✓ 标记为已付款';b.style.cssText=r.is_paid?'background:var(--sand);color:var(--ink2);border-color:var(--sand3)':'background:var(--ink);color:#fff;border-color:var(--ink)';}
   document.getElementById('detailOv').classList.add('show');
+  setTimeout(syncActualPayDate, 50);
 }
 
 async function togglePaid(){
   if(!curDetail)return;const val=curDetail.is_paid?0:1;
   const r=await fetch(`/api/payables/${curDetail.id}/paid`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({is_paid:val})});
   if((await r.json()).ok){toast(val?'✓ 已标记已付款':'已撤销');closeOv('detailOv');loadP();}
+}
+
+function syncActualPayDate(){
+  if(!curDetail) return;
+  const days = parseInt(document.getElementById('d_pay_days').value) || 0;
+  const due = curDetail.due_date;
+  const el = document.getElementById('d_actual_pay');
+  if(!due || !days){
+    el.textContent = due ? '无账期，付款日 = 交货日' : '—';
+    return;
+  }
+  const d = pd(due);
+  if(!d){ el.textContent = '—'; return; }
+  const pay = new Date(d);
+  pay.setDate(pay.getDate() + days);
+  el.textContent = pay.toLocaleDateString('zh-CN',{year:'numeric',month:'2-digit',day:'2-digit'});
+}
+
+function syncPayment(field, changed){
+  const total = curDetail ? (curDetail.total_amount||0) : 0;
+  if(field==='pre'){
+    if(changed==='amt'){
+      const amt=parseFloat(document.getElementById('d_pre_amt').value)||0;
+      if(total>0) document.getElementById('d_pre_pct').value=Math.round(amt/total*10000)/100;
+    } else {
+      const pct=parseFloat(document.getElementById('d_pre_pct').value)||0;
+      if(total>0) document.getElementById('d_pre_amt').value=Math.round(total*pct/100*100)/100;
+    }
+  } else {
+    if(changed==='amt'){
+      const amt=parseFloat(document.getElementById('d_tail_amt').value)||0;
+      if(total>0) document.getElementById('d_tail_pct').value=Math.round(amt/total*10000)/100;
+    } else {
+      const pct=parseFloat(document.getElementById('d_tail_pct').value)||0;
+      if(total>0) document.getElementById('d_tail_amt').value=Math.round(total*pct/100*100)/100;
+    }
+  }
+}
+
+async function savePayment(){
+  if(!curDetail) return;
+  const pre=parseFloat(document.getElementById('d_pre_amt').value)||null;
+  const tail=parseFloat(document.getElementById('d_tail_amt').value)||null;
+  const pdays=parseInt(document.getElementById('d_pay_days').value)||null;
+  const r=await fetch(`/api/payables/${curDetail.id}/payment`,{
+    method:'PUT',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({prepayment:pre,tail_payment:tail,payment_days:pdays})
+  });
+  const d=await r.json();
+  if(d.ok){
+    curDetail.prepayment=pre; curDetail.tail_payment=tail; curDetail.payment_days=pdays;
+    const rec=allP.find(x=>x.id===curDetail.id);
+    if(rec){rec.prepayment=pre;rec.tail_payment=tail;rec.payment_days=pdays;}
+    toast('✓ 已保存'); calcStats(); renderP();
+  } else toast('保存失败：'+d.error);
+}
+
+function editNote(id, el){
+  const cur = el.dataset.raw || '';
+  const input = document.createElement('input');
+  input.type='text'; input.value=cur;
+  input.style.cssText='width:100%;font-size:11px;border:1px solid var(--rust);border-radius:3px;padding:2px 5px;font-family:inherit;outline:none';
+  el.replaceWith(input); input.focus(); input.select();
+  async function save(){
+    const val=input.value.trim();
+    const r=await fetch(`/api/payables/${id}/notes`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({notes:val})});
+    if((await r.json()).ok){
+      // 更新 allP 中的数据
+      const rec=allP.find(r=>r.id===id);
+      if(rec)rec.notes=val;
+      renderP();
+      toast('✓ 备注已保存');
+    }
+  }
+  input.addEventListener('blur',save);
+  input.addEventListener('keydown',e=>{if(e.key==='Enter')input.blur();if(e.key==='Escape'){input.blur();}});
 }
 
 async function qMarkPaid(id,val){
@@ -694,7 +838,8 @@ async function loadSched(){
   const d=await(await fetch('/api/report_schedule')).json();
   if(d.emails!==undefined){
     document.getElementById('seEmails').value=d.emails||'';
-    document.getElementById('seTime').value=d.send_time||'08:30';
+    document.getElementById('seTime').value=d.send_time||'08:00';
+        document.getElementById('seTime2').value=d.send_time2||'16:30';
     document.getElementById('seTitle').value=d.report_title||'';
     document.getElementById('seEnabled').checked=!!d.enabled;
   }
@@ -706,7 +851,7 @@ async function loadSched(){
     :'<tr><td colspan="5" style="color:var(--ink4);padding:12px 0;text-align:center;font-size:12px">暂无记录</td></tr>';
 }
 async function saveSched(){
-  const r=await fetch('/api/report_schedule',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({emails:document.getElementById('seEmails').value.trim(),send_time:document.getElementById('seTime').value,report_title:document.getElementById('seTitle').value.trim(),enabled:document.getElementById('seEnabled').checked})});
+  const r=await fetch('/api/report_schedule',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({emails:document.getElementById('seEmails').value.trim(),send_time:document.getElementById('seTime').value,send_time2:document.getElementById('seTime2').value,report_title:document.getElementById('seTitle').value.trim(),enabled:document.getElementById('seEnabled').checked})});
   const d=await r.json();const m=document.getElementById('seMsg');
   if(d.ok){m.style.color='var(--teal)';m.textContent='✓ 设定已保存';}else{m.style.color='var(--rust)';m.textContent='保存失败：'+d.error;}
 }
