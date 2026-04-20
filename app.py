@@ -600,7 +600,9 @@ def restart_scheduler():
     with app.app_context():
         s=query("SELECT * FROM report_schedule WHERE id=1",one=True)
         if s and s['enabled'] and s['emails']:
-            for i, t in enumerate([s.get('send_time','08:00'), s.get('send_time2','16:30')], 1):
+            t1 = s['send_time'] if s['send_time'] else '08:00'
+            t2 = s['send_time2'] if s['send_time2'] else '16:30'
+            for i, t in enumerate([t1, t2], 1):
                 try:
                     if not t: continue
                     h,m=t.strip().split(':')
