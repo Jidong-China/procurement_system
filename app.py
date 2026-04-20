@@ -68,6 +68,7 @@ def init_db():
             tail_payment REAL,
             due_date TEXT,
             due_date_raw TEXT DEFAULT '',
+            payment_days INTEGER DEFAULT NULL,
             notes TEXT DEFAULT '',
             is_paid INTEGER DEFAULT 0,
             paid_at TEXT,
@@ -98,8 +99,9 @@ def init_db():
         );
         CREATE TABLE IF NOT EXISTS report_schedule (
             id INTEGER PRIMARY KEY,
-            emails TEXT DEFAULT '',
-            send_time TEXT DEFAULT '08:30',
+            emails TEXT DEFAULT 'jidong@seatrustpower.com',
+            send_time TEXT DEFAULT '08:00',
+            send_time2 TEXT DEFAULT '16:30',
             report_title TEXT DEFAULT '采购应付款每日预警日报',
             enabled INTEGER DEFAULT 1,
             updated_at TEXT DEFAULT (datetime('now'))
@@ -124,6 +126,23 @@ def init_db():
     if not db.execute("SELECT id FROM report_schedule WHERE id=1").fetchone():
         db.execute("INSERT INTO report_schedule(id) VALUES(1)")
         db.commit()
+    # 兼容旧数据库：加 payment_days 列
+    try:
+        db.execute("ALTER TABLE payables ADD COLUMN payment_days INTEGER DEFAULT NULL")
+        db.commit()
+    except: pass
+    # 兼容旧数据库：加 send_time2 列
+    try:
+        db.execute("ALTER TABLE report_schedule ADD COLUMN send_time2 TEXT DEFAULT '16:30'")
+        db.commit()
+    except: pass
+    # 设置默认邮箱（如果还未设置）
+    try:
+        row = db.execute("SELECT emails FROM report_schedule WHERE id=1").fetchone()
+        if row and not row[0]:
+            db.execute("UPDATE report_schedule SET emails='jidong@seatrustpower.com' WHERE id=1")
+            db.commit()
+    except: pass
 
 def login_required(f):
     @wraps(f)
@@ -311,28 +330,59 @@ def api_upload_excel():
             if pd.isna(v): return ''
         except: pass
         return str(v).strip()
-    sheets = ['田少东','张翡翠','赵虹','胡激东','谭荣毅']
+    # Sheet名映射：支持旧格式（人名）和新格式（合同号前缀）
+    # 合法合同编号前缀：TSD→田少东, ZFC→张翡翠, ZHX/ME→赵虹，其他一律报错
+    PREFIX_MAP = {
+        'TSD': '田少东',
+        'ZFC': '张翡翠',
+        'ZHX': '赵虹',
+        'ME':  '赵虹',
+    }
+    NAME_MAP = {'田少东':'田少东','张翡翠':'张翡翠','赵虹':'赵虹','胡激东':'胡激东','谭荣毅':'谭荣毅','田工':'田少东'}
+    def guess_person(sheet_name, contract_no):
+        cn = str(contract_no).strip().upper()
+        if cn:
+            for prefix, person in sorted(PREFIX_MAP.items(), key=lambda x:-len(x[0])):
+                if cn.startswith(prefix): return person
+            return '__INVALID__'  # 有合同号但前缀非法
+        # 合同号为空：按sheet名判断
+        return NAME_MAP.get(sheet_name, '__INVALID__')
     records = []
+    invalid_rows = []
     try:
         xf = pd.ExcelFile(f)
-        for sheet in sheets:
-            if sheet not in xf.sheet_names: continue
+        for sheet in xf.sheet_names:
             df = pd.read_excel(xf, sheet_name=sheet)
+            cols = df.columns.tolist()
+            due_col = '实际交货期' if '实际交货期' in cols else '交货期'
+            notes_col = '中期跟进' if '中期跟进' in cols else ('临期跟进' if '临期跟进' in cols else None)
             for _, row in df.iterrows():
                 supplier = _str(row.get('供应商',''))
-                if not supplier or supplier=='nan': continue
+                if not supplier or supplier=='nan' or supplier.startswith('总计') or supplier.startswith('合计'): continue
+                contract_no = _str(row.get('合同编号',''))
+                if not contract_no:
+                    invalid_rows.append(f"(合同编号为空)·{supplier}")
+                    continue
+                person = guess_person(sheet, contract_no)
+                if person == '__INVALID__':
+                    invalid_rows.append(f"{contract_no}·{supplier}")
+                    continue
+                due_raw = _str(row.get(due_col,''))
+                notes_val = _str(row.get(notes_col,''))[:200] if notes_col else ''
                 records.append({
-                    'sheet':sheet, 'sign_date':_date(row.get('签订日期')),
-                    'contract_no':_str(row.get('合同编号','')), 'our_company':_str(row.get('我方公司','')),
+                    'sheet':person, 'sign_date':_date(row.get('签订日期')),
+                    'contract_no':contract_no, 'our_company':_str(row.get('我方公司','')),
                     'supplier':supplier, 'total_amount':_float(row.get('合同总金额')),
                     'payment_terms':_str(row.get('付款方式','')), 'prepayment':_float(row.get('预付款')),
-                    'tail_payment':_float(row.get('尾款')), 'due_date':_date(row.get('交货期')),
-                    'due_date_raw':_str(row.get('交货期','')), 'notes':_str(row.get('中期跟进',''))[:200],
+                    'tail_payment':_float(row.get('尾款')), 'due_date':_date(row.get(due_col)),
+                    'due_date_raw':due_raw, 'notes':notes_val,
                 })
     except Exception as e:
         return jsonify({'error':f'解析失败: {str(e)}'}), 400
+    if invalid_rows:
+        return jsonify({'error':f'上传失败，请检查以下记录（合同编号不能为空，且必须以 TSD/ZFC/ZHX/ME 开头）：' + '；'.join(invalid_rows[:10])}), 400
     if not records:
-        return jsonify({'error':'未找到有效数据，请确认Sheet名称为田少东/张翡翠/赵虹/胡激东/谭荣毅'}), 400
+        return jsonify({'error':'未找到有效数据（供应商列为空）'}), 400
     batch = datetime.now().strftime('%Y%m%d_%H%M%S')
     execute("DELETE FROM payables")
     for r in records:
@@ -344,6 +394,27 @@ def api_upload_excel():
                  r['due_date'],r['due_date_raw'],r['notes'],batch))
     with_amt = sum(1 for r in records if r['total_amount'] is not None)
     return jsonify({'ok':True,'count':len(records),'with_amount':with_amt,'batch':batch})
+
+
+@app.route('/api/payables/<int:pid>/notes', methods=['PUT'])
+@admin_required
+def api_update_notes(pid):
+    notes = request.json.get('notes','')
+    execute("UPDATE payables SET notes=?,updated_at=datetime('now') WHERE id=?",(notes[:500],pid))
+    return jsonify({'ok':True})
+
+@app.route('/api/payables/<int:pid>/payment', methods=['PUT'])
+@admin_required
+def api_update_payment(pid):
+    d = request.json
+    pre = d.get('prepayment')
+    tail = d.get('tail_payment')
+    pdays = d.get('payment_days')
+    execute("UPDATE payables SET prepayment=?,tail_payment=?,payment_days=?,updated_at=datetime('now') WHERE id=?",
+            (float(pre) if pre is not None else None,
+             float(tail) if tail is not None else None,
+             int(pdays) if pdays is not None else None, pid))
+    return jsonify({'ok':True})
 
 @app.route('/api/payables/<int:pid>/paid', methods=['PUT'])
 @admin_required
@@ -439,8 +510,8 @@ def api_sched_get():
 @admin_required
 def api_sched_put():
     d=request.json
-    execute("UPDATE report_schedule SET emails=?,send_time=?,report_title=?,enabled=?,updated_at=datetime('now') WHERE id=1",
-            (d.get('emails',''),d.get('send_time','08:30'),
+    execute("UPDATE report_schedule SET emails=?,send_time=?,send_time2=?,report_title=?,enabled=?,updated_at=datetime('now') WHERE id=1",
+            (d.get('emails',''),d.get('send_time','08:00'),d.get('send_time2','16:30'),
              d.get('report_title','采购应付款每日预警日报'),1 if d.get('enabled',True) else 0))
     restart_scheduler()
     return jsonify({'ok':True})
@@ -524,15 +595,19 @@ if HAS_SCHEDULER:
 
 def restart_scheduler():
     if not HAS_SCHEDULER: return
-    if scheduler.get_job('dr'): scheduler.remove_job('dr')
+    for jid in ['dr1','dr2']:
+        if scheduler.get_job(jid): scheduler.remove_job(jid)
     with app.app_context():
         s=query("SELECT * FROM report_schedule WHERE id=1",one=True)
         if s and s['enabled'] and s['emails']:
-            try:
-                h,m=s['send_time'].split(':')
-                scheduler.add_job(send_daily_report,'cron',hour=int(h),minute=int(m),id='dr',replace_existing=True)
-                print(f"[Scheduler] 日报: 每天 {s['send_time']}")
-            except Exception as e: print(f"[Scheduler] 失败: {e}")
+            for i, t in enumerate([s.get('send_time','08:00'), s.get('send_time2','16:30')], 1):
+                try:
+                    if not t: continue
+                    h,m=t.strip().split(':')
+                    scheduler.add_job(send_daily_report,'cron',hour=int(h),minute=int(m),
+                                      id=f'dr{i}',replace_existing=True)
+                    print(f"[Scheduler] 日报{i}: 每天 {t}")
+                except Exception as e: print(f"[Scheduler] 定时{i}失败: {e}")
 
 @app.route('/health')
 def health(): return jsonify({'status':'ok','time':datetime.now().isoformat()})
