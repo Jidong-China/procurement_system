@@ -69,6 +69,8 @@ def init_db():
             due_date TEXT,
             due_date_raw TEXT DEFAULT '',
             payment_days INTEGER DEFAULT NULL,
+            prepayment_paid INTEGER DEFAULT 0,
+            tail_paid INTEGER DEFAULT 0,
             notes TEXT DEFAULT '',
             is_paid INTEGER DEFAULT 0,
             paid_at TEXT,
@@ -126,11 +128,16 @@ def init_db():
     if not db.execute("SELECT id FROM report_schedule WHERE id=1").fetchone():
         db.execute("INSERT INTO report_schedule(id) VALUES(1)")
         db.commit()
-    # 兼容旧数据库：加 payment_days 列
-    try:
-        db.execute("ALTER TABLE payables ADD COLUMN payment_days INTEGER DEFAULT NULL")
-        db.commit()
-    except: pass
+    # 兼容旧数据库：加新列
+    for col, default in [
+        ('payment_days', 'INTEGER DEFAULT NULL'),
+        ('prepayment_paid', 'INTEGER DEFAULT 0'),
+        ('tail_paid', 'INTEGER DEFAULT 0'),
+    ]:
+        try:
+            db.execute(f"ALTER TABLE payables ADD COLUMN {col} {default}")
+            db.commit()
+        except: pass
     # 兼容旧数据库：加 send_time2 列
     try:
         db.execute("ALTER TABLE report_schedule ADD COLUMN send_time2 TEXT DEFAULT '16:30'")
@@ -395,6 +402,20 @@ def api_upload_excel():
     with_amt = sum(1 for r in records if r['total_amount'] is not None)
     return jsonify({'ok':True,'count':len(records),'with_amount':with_amt,'batch':batch})
 
+
+@app.route('/api/payables/<int:pid>/subpaid', methods=['PUT'])
+@admin_required
+def api_mark_subpaid(pid):
+    d = request.json
+    ptype = d.get('type')  # 'prepayment' or 'tail'
+    paid = 1 if d.get('paid') else 0
+    if ptype == 'prepayment':
+        execute("UPDATE payables SET prepayment_paid=?,updated_at=datetime('now') WHERE id=?", (paid, pid))
+    elif ptype == 'tail':
+        execute("UPDATE payables SET tail_paid=?,updated_at=datetime('now') WHERE id=?", (paid, pid))
+    else:
+        return jsonify({'error': '无效类型'}), 400
+    return jsonify({'ok': True})
 
 @app.route('/api/payables/<int:pid>/notes', methods=['PUT'])
 @admin_required
