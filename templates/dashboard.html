@@ -534,52 +534,18 @@ async function qMarkPaid(id,val){
 
 // ── XLSX UPLOAD (payables) ──
 function handleXlsxUpload(input){
-  const file=input.files[0];if(!file)return;toast('⏳ 解析台账…');
-  const reader=new FileReader();
-  reader.onload=async function(e){
-    try{
-      const wb=XLSX.read(e.target.result,{type:'array',cellDates:true});
-      const sheets=['田少东','张翡翠','赵虹','胡激东','谭荣毅'];
-      const cm={'签订日期':'sign_date','合同编号':'contract_no','我方公司':'our_company','供应商':'supplier','合同总金额':'total_amount','付款方式':'payment_terms','预付款':'prepayment','尾款':'tail_payment','交货期':'due_date','中期跟进':'notes'};
-      const records=[];
-      wb.SheetNames.forEach(name=>{
-        if(!sheets.includes(name))return;
-        // raw:true + cellDates:true: dates → JS Date objects, numbers → actual numbers
-        const raw=XLSX.utils.sheet_to_json(wb.Sheets[name],{raw:true,cellDates:true,defval:''});
-        raw.forEach(row=>{
-          const sup=String(row['供应商']||'').trim();if(!sup)return;
-          const r={sheet:name};
-          Object.entries(cm).forEach(([cn,key])=>{
-            let v=row[cn]!==undefined?row[cn]:'';
-            if(key==='sign_date'||key==='due_date'){
-              if(v instanceof Date){
-                // JS Date from cellDates:true — format to YYYY-MM-DD
-                const yr=v.getFullYear(),mo=String(v.getMonth()+1).padStart(2,'0'),dy=String(v.getDate()).padStart(2,'0');
-                r[key]=`${yr}-${mo}-${dy}`;
-              } else if(v){
-                const s=String(v).trim();
-                const m=s.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})/);
-                r[key]=m?`${m[1]}-${m[2].padStart(2,'0')}-${m[3].padStart(2,'0')}`:s;
-              } else r[key]=null;
-            } else if(['total_amount','prepayment','tail_payment'].includes(key)){
-              // raw:true gives actual numbers; fallback parse strings
-              const n=typeof v==='number'?v:parseFloat(String(v).replace(/[,，\s¥￥]/g,''));
-              r[key]=!isNaN(n)&&v!==''?n:null;
-            } else {r[key]=v!==''?String(v).trim():'';}
-          });
-          records.push(r);
-        });
-      });
-      const res=await fetch('/api/payables/upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({records})});
-      const d=await res.json();
-      // debug: check how many records have amounts
-      const withAmt=records.filter(r=>r.total_amount!=null).length;
-      const sample=records.find(r=>r.total_amount!=null);
-      console.log('Upload debug - records:',records.length,'with amount:',withAmt,'sample:',sample);
-      if(d.ok){toast(`✓ 台账已更新，共 ${d.count} 条（有金额${withAmt}条）`);loadP();}else toast('上传失败：'+d.error);
-    }catch(err){toast('解析失败：'+err.message);}
-  };
-  reader.readAsArrayBuffer(file);input.value='';
+  const file=input.files[0];if(!file)return;
+  toast('⏳ 上传解析中，请稍候…');
+  const fd=new FormData();
+  fd.append('file',file);
+  fetch('/api/payables/upload_excel',{method:'POST',body:fd})
+    .then(r=>r.json())
+    .then(d=>{
+      if(d.ok){toast(`✓ 台账已更新，共 ${d.count} 条（有金额 ${d.with_amount} 条）`);loadP();}
+      else toast('上传失败：'+d.error);
+    })
+    .catch(err=>toast('网络错误：'+err.message));
+  input.value='';
 }
 
 // ── PROJECTS ──
