@@ -264,9 +264,7 @@ def api_payables_upload():
     records=request.json.get('records',[])
     if not records: return jsonify({'error':'数据为空'}),400
     batch=datetime.now().strftime('%Y%m%d_%H%M%S')
-    append = request.json.get('append', False)
-    if not append:
-        execute("DELETE FROM payables")
+    execute("DELETE FROM payables")
     for r in records:
         execute("""INSERT INTO payables(sheet,sign_date,contract_no,our_company,supplier,
                    total_amount,payment_terms,prepayment,tail_payment,due_date,due_date_raw,notes,upload_batch)
@@ -276,6 +274,76 @@ def api_payables_upload():
                  r.get('payment_terms',''),r.get('prepayment'),r.get('tail_payment'),
                  r.get('due_date') or None,r.get('due_date_raw',''),r.get('notes',''),batch))
     return jsonify({'ok':True,'count':len(records),'batch':batch})
+
+@app.route('/api/payables/upload_excel', methods=['POST'])
+@admin_required
+def api_upload_excel():
+    """服务端解析Excel — 用pandas，100%可靠，不依赖浏览器SheetJS"""
+    try:
+        import pandas as pd, re as _re
+        from pandas import NaT
+    except ImportError:
+        return jsonify({'error':'服务端缺少pandas'}), 500
+    if 'file' not in request.files:
+        return jsonify({'error':'未收到文件'}), 400
+    f = request.files['file']
+    if not f.filename.endswith(('.xlsx','.xls')):
+        return jsonify({'error':'请上传 .xlsx 或 .xls 文件'}), 400
+    def _date(v):
+        if v is None or v is NaT: return None
+        try:
+            if pd.isna(v): return None
+        except: pass
+        if hasattr(v,'strftime'): return v.strftime('%Y-%m-%d')
+        s=str(v).strip()
+        m=_re.match(r'^(\d{4})[-/](\d{1,2})[-/](\d{1,2})',s)
+        return f"{m[1]}-{m[2].zfill(2)}-{m[3].zfill(2)}" if m else (s if s else None)
+    def _float(v):
+        if v is None or v is NaT: return None
+        try:
+            if pd.isna(v): return None
+        except: pass
+        try: return float(str(v).replace(',','').strip())
+        except: return None
+    def _str(v):
+        if v is None or v is NaT: return ''
+        try:
+            if pd.isna(v): return ''
+        except: pass
+        return str(v).strip()
+    sheets = ['田少东','张翡翠','赵虹','胡激东','谭荣毅']
+    records = []
+    try:
+        xf = pd.ExcelFile(f)
+        for sheet in sheets:
+            if sheet not in xf.sheet_names: continue
+            df = pd.read_excel(xf, sheet_name=sheet)
+            for _, row in df.iterrows():
+                supplier = _str(row.get('供应商',''))
+                if not supplier or supplier=='nan': continue
+                records.append({
+                    'sheet':sheet, 'sign_date':_date(row.get('签订日期')),
+                    'contract_no':_str(row.get('合同编号','')), 'our_company':_str(row.get('我方公司','')),
+                    'supplier':supplier, 'total_amount':_float(row.get('合同总金额')),
+                    'payment_terms':_str(row.get('付款方式','')), 'prepayment':_float(row.get('预付款')),
+                    'tail_payment':_float(row.get('尾款')), 'due_date':_date(row.get('交货期')),
+                    'due_date_raw':_str(row.get('交货期','')), 'notes':_str(row.get('中期跟进',''))[:200],
+                })
+    except Exception as e:
+        return jsonify({'error':f'解析失败: {str(e)}'}), 400
+    if not records:
+        return jsonify({'error':'未找到有效数据，请确认Sheet名称为田少东/张翡翠/赵虹/胡激东/谭荣毅'}), 400
+    batch = datetime.now().strftime('%Y%m%d_%H%M%S')
+    execute("DELETE FROM payables")
+    for r in records:
+        execute("""INSERT INTO payables(sheet,sign_date,contract_no,our_company,supplier,
+                   total_amount,payment_terms,prepayment,tail_payment,due_date,due_date_raw,notes,upload_batch)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (r['sheet'],r['sign_date'],r['contract_no'],r['our_company'],r['supplier'],
+                 r['total_amount'],r['payment_terms'],r['prepayment'],r['tail_payment'],
+                 r['due_date'],r['due_date_raw'],r['notes'],batch))
+    with_amt = sum(1 for r in records if r['total_amount'] is not None)
+    return jsonify({'ok':True,'count':len(records),'with_amount':with_amt,'batch':batch})
 
 @app.route('/api/payables/<int:pid>/paid', methods=['PUT'])
 @admin_required
