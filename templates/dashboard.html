@@ -202,7 +202,7 @@ tr:last-child td{border-bottom:none}
     <div class="tbl-scroll">
       <table id="ptable">
         <thead><tr>
-          <th>状态</th><th>负责人</th><th>供应商</th><th>合同编号</th>
+          <th>状态</th><th>我方公司</th><th>供应商</th><th>合同编号</th>
           <th>合同总额</th><th>付款方式</th>
           <th>预付款</th><th style="font-size:9px">预付%</th>
           <th>尾款</th><th style="font-size:9px">尾款%</th>
@@ -504,7 +504,7 @@ function renderP(){
   document.getElementById('ptbody').innerHTML=slice.map((r,i)=>`
     <tr onclick="showDetail(${s+i})" style="cursor:pointer">
       <td>${badge(r)}</td>
-      <td><span class="tag">${r.sheet}</span></td>
+      <td style="font-size:11px;color:var(--ink2)">${r.our_company||'—'}</td>
       <td><div class="supplier-name">${r.supplier}</div><div class="company-sub">${r.our_company||''}</div></td>
       <td><span class="mono">${(r.contract_no||'—').slice(0,22)}</span></td>
       <td>${fa(r.total_amount)}</td>
