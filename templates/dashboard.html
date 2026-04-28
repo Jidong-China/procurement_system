@@ -183,8 +183,7 @@ tr:last-child td{border-bottom:none}
     <select id="pSup" class="sel" onchange="renderP()"><option value="">全部供应商</option></select>
     <select id="pCon" class="sel" onchange="renderP()"><option value="">全部合同号</option></select>
     <select id="pPer" class="sel" onchange="renderP()">
-      <option value="">全部负责人</option>
-      <option>田少东</option><option>张翡翠</option><option>赵虹</option><option>胡激东</option><option>谭荣毅</option>
+      <option value="">全部我方公司</option>
     </select>
     <select id="pSta" class="sel" onchange="renderP()">
       <option value="">全部状态</option>
@@ -449,6 +448,12 @@ function closeOv(id){document.getElementById(id).classList.remove('show');}
 // ── PAYABLES ──
 async function loadP(){
   const r=await fetch('/api/payables');allP=await r.json();
+  // 动态填充我方公司筛选
+  const sel=document.getElementById('pPer');
+  const cur=sel.value;
+  const companies=[...new Set(allP.map(x=>x.our_company).filter(Boolean))].sort();
+  sel.innerHTML='<option value="">全部我方公司</option>'+companies.map(c=>`<option value="${c}">${c}</option>`).join('');
+  if(cur) sel.value=cur;
   const m=await (await fetch('/api/payables/meta')).json();
   const ss=document.getElementById('pSup');
   ss.innerHTML='<option value="">全部供应商</option>';
@@ -481,7 +486,7 @@ function renderP(){
   const fSup=document.getElementById('pSup').value,fCon=document.getElementById('pCon').value;
   const srt=document.getElementById('pSrt').value;
   filtP=allP.filter(r=>{
-    if(fp&&r.sheet!==fp)return false;if(fSup&&r.supplier!==fSup)return false;if(fCon&&r.contract_no!==fCon)return false;
+    if(fp&&r.our_company!==fp)return false;if(fSup&&r.supplier!==fSup)return false;if(fCon&&r.contract_no!==fCon)return false;
     if(q&&!(r.supplier+r.contract_no+(r.our_company||'')+(r.notes||'')).toLowerCase().includes(q))return false;
     if(fs)return pst(r)===fs;return true;
   });
