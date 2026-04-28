@@ -207,7 +207,6 @@ tr:last-child td{border-bottom:none}
           <th>预付款</th><th style="font-size:9px">预付%</th>
           <th>尾款</th><th style="font-size:9px">尾款%</th>
           <th>到期日</th><th>备注（可编辑）</th>
-          {% if user.role == 'admin' %}<th>操作</th>{% endif %}
         </tr></thead>
         <tbody id="ptbody"></tbody>
       </table>
@@ -422,16 +421,23 @@ function duActual(r){
   return Math.ceil((d-t)/86400000);
 }
 function pst(r){
-  if(r.is_paid)return'paid';
+  const hasPre=r.prepayment&&r.prepayment>0;
+  const hasTail=r.tail_payment&&r.tail_payment>0;
+  const allPaid=r.is_paid
+    ||(hasPre&&hasTail&&r.prepayment_paid&&r.tail_paid)
+    ||(hasPre&&!hasTail&&r.prepayment_paid)
+    ||(!hasPre&&hasTail&&r.tail_paid);
+  if(allPaid)return'paid';
   const n=duActual(r);
   if(n===null)return'unknown';
   if(n<0)return'past';if(n<=3)return'urgent';if(n<=7)return'warning';return'normal';
 }
 function badge(r){
-  if(r.is_paid)return'<span class="b-paid">✓ 已付款</span>';
-  const n=duActual(r),s=pst(r);
+  const s=pst(r);
+  if(s==='paid')return'<span class="b-paid">✓ 全部付讫</span>';
+  const n=duActual(r);
   const label=n!==null?Math.abs(n)+(n<0?'天前':'天后'):'待确认';
-  const cls={urgent:'b-urg',warning:'b-warn',normal:'b-ok',past:'b-gray',unknown:'b-gray'}[s];
+  const cls={urgent:'b-urg',warning:'b-warn',normal:'b-ok',past:'b-gray',unknown:'b-gray'}[s]||'b-gray';
   return`<span class="${cls}">${label}</span>`;
 }
 function fa(v){if(v==null)return'<span style="color:var(--ink4)">—</span>';return'<span class="mono">¥'+Number(v).toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2})+'</span>';}
@@ -503,16 +509,30 @@ function renderP(){
       <td><span class="mono">${(r.contract_no||'—').slice(0,22)}</span></td>
       <td>${fa(r.total_amount)}</td>
       <td style="font-size:11px;color:var(--ink3);max-width:120px">${(r.payment_terms||'—').replace(/\n/g,'·').slice(0,24)}</td>
-      <td>
-        ${r.prepayment_paid?'<span style="font-size:10px;color:var(--teal)">✓已付</span>':fa(r.prepayment)}
-        ${IS_ADMIN&&r.prepayment&&!r.prepayment_paid?`<br><button onclick="event.stopPropagation();markSub(${r.id},'prepayment')" style="font-size:9px;padding:1px 5px;margin-top:2px;border-radius:3px;border:1px solid var(--sand3);background:var(--sand);cursor:pointer">标记已付</button>`:''}
+      <td onclick="event.stopPropagation()" style="padding:4px 8px;min-width:90px">
+        <div style="font-size:11px;color:var(--ink3);margin-bottom:3px">${fa(r.prepayment)}</div>
+        ${IS_ADMIN&&r.prepayment?`<button onclick="event.stopPropagation();markSub(${r.id},'prepayment')"
+          style="font-size:10px;padding:4px 0;border-radius:5px;cursor:pointer;width:100%;font-weight:600;
+          ${r.prepayment_paid
+            ?"background:#e6f7f4;border:1.5px solid var(--teal);color:var(--teal)"
+            :"background:#fff3f0;border:1.5px solid var(--rust);color:var(--rust)"
+          }">
+          ${r.prepayment_paid?'✓ 已付（撤销）':'⬤ 待付款'}
+        </button>`:'<span style="font-size:11px;color:var(--ink4)">—</span>'}
       </td>
-      <td style="font-size:11px;color:var(--ink4)">${r.total_amount&&r.prepayment?Math.round(r.prepayment/r.total_amount*100)+'%':'—'}</td>
-      <td>
-        ${r.tail_paid?'<span style="font-size:10px;color:var(--teal)">✓已付</span>':fa(r.tail_payment)}
-        ${IS_ADMIN&&r.tail_payment&&!r.tail_paid?`<br><button onclick="event.stopPropagation();markSub(${r.id},'tail')" style="font-size:9px;padding:1px 5px;margin-top:2px;border-radius:3px;border:1px solid var(--sand3);background:var(--sand);cursor:pointer">标记已付</button>`:''}
+      <td style="font-size:11px;color:var(--ink4);text-align:center">${r.total_amount&&r.prepayment?Math.round(r.prepayment/r.total_amount*100)+'%':'—'}</td>
+      <td onclick="event.stopPropagation()" style="padding:4px 8px;min-width:90px">
+        <div style="font-size:11px;color:var(--ink3);margin-bottom:3px">${fa(r.tail_payment)}</div>
+        ${IS_ADMIN&&r.tail_payment?`<button onclick="event.stopPropagation();markSub(${r.id},'tail')"
+          style="font-size:10px;padding:4px 0;border-radius:5px;cursor:pointer;width:100%;font-weight:600;
+          ${r.tail_paid
+            ?"background:#e6f7f4;border:1.5px solid var(--teal);color:var(--teal)"
+            :"background:#fff3f0;border:1.5px solid var(--rust);color:var(--rust)"
+          }">
+          ${r.tail_paid?'✓ 已付（撤销）':'⬤ 待付款'}
+        </button>`:'<span style="font-size:11px;color:var(--ink4)">—</span>'}
       </td>
-      <td style="font-size:11px;color:var(--ink4)">${r.total_amount&&r.tail_payment?Math.round(r.tail_payment/r.total_amount*100)+'%':'—'}</td>
+      <td style="font-size:11px;color:var(--ink4);text-align:center">${r.total_amount&&r.tail_payment?Math.round(r.tail_payment/r.total_amount*100)+'%':'—'}</td>
       <td style="white-space:nowrap">${fd(r.due_date)}</td>
       <td onclick="event.stopPropagation()" style="max-width:180px">
         ${IS_ADMIN?`<span class="editable-note" onclick="editNote(${r.id},this)" title="点击编辑备注"
@@ -521,7 +541,6 @@ function renderP(){
           border-bottom:1px dashed var(--sand3);padding-bottom:2px">${r.notes||'<span style=color:var(--sand3)>点击添加备注</span>'}</span>`
         :`<span style="font-size:11px;color:var(--ink3)">${r.notes||'—'}</span>`}
       </td>
-      ${IS_ADMIN?`<td><button onclick="event.stopPropagation();qMarkPaid(${r.id},${r.is_paid?0:1})" style="font-size:10px;padding:3px 8px;border-radius:4px;border:1px solid var(--sand3);background:var(--sand);cursor:pointer">${r.is_paid?'撤销全款':'全款已付'}</button></td>`:''}
     </tr>`).join('');
   // pagination
   const tp=Math.ceil(total/PGS);let h='';
@@ -709,20 +728,30 @@ function editNote(id, el){
 }
 
 async function markSub(id, type){
-  // 标记预付款或尾款已付
-  const r = allP.find(x=>x.id===id);
+  const r=allP.find(x=>x.id===id);
   if(!r) return;
-  const field = type==='prepayment' ? 'prepayment_paid' : 'tail_paid';
-  const newVal = r[field] ? 0 : 1;
-  const res = await fetch(`/api/payables/${id}/subpaid`,{
-    method:'PUT', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({type, paid: newVal})
+  const field=type==='prepayment'?'prepayment_paid':'tail_paid';
+  const newVal=r[field]?0:1;
+  const res=await fetch(`/api/payables/${id}/subpaid`,{
+    method:'PUT',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({type,paid:newVal})
   });
-  const d = await res.json();
+  const d=await res.json();
   if(d.ok){
-    r[field] = newVal;
-    renderP();
-    toast(newVal ? `✓ ${type==='prepayment'?'预付款':'尾款'}已标记付款` : '已撤销');
+    r[field]=newVal;
+    // 自动同步 is_paid
+    const hasPre=r.prepayment&&r.prepayment>0;
+    const hasTail=r.tail_payment&&r.tail_payment>0;
+    const allPaid=(hasPre&&hasTail&&r.prepayment_paid&&r.tail_paid)
+               ||(hasPre&&!hasTail&&r.prepayment_paid)
+               ||(!hasPre&&hasTail&&r.tail_paid);
+    if(allPaid!==!!r.is_paid){
+      await fetch(`/api/payables/${id}/paid`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({paid:allPaid?1:0})});
+      r.is_paid=allPaid?1:0;
+    }
+    calcStats(); renderP();
+    const label=type==='prepayment'?'预付款':'尾款';
+    toast(newVal?`✓ ${label}已付款`:`${label}已撤销为未付`);
   } else toast('操作失败：'+d.error);
 }
 
