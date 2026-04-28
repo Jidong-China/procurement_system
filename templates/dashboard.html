@@ -142,6 +142,7 @@ tr:last-child td{border-bottom:none}
   <div class="hdr-right">
     <div class="hpill" id="today"></div>
     {% if user.role == 'admin' %}
+    <a href="/download_template" class="hbtn hbtn-ghost" title="下载Excel导入模版" style="text-decoration:none;font-size:12px">↓ 模版</a>
     <label class="hbtn-upload" title="上传应付款台账Excel">
       ↑ 更新台账
       <input type="file" id="xlsxUpload" accept=".xlsx,.xls" style="display:none" onchange="handleXlsxUpload(this)">
@@ -774,7 +775,12 @@ function handleXlsxUpload(input){
   fetch('/api/payables/upload_excel',{method:'POST',body:fd})
     .then(r=>r.json())
     .then(d=>{
-      if(d.ok){toast(`✓ 台账已更新，共 ${d.count} 条（有金额 ${d.with_amount} 条）`);loadP();}
+      if(d.ok){
+        const msg = d.skipped>0
+          ? `✓ 新增 ${d.count} 条，跳过 ${d.skipped} 条（合同号已存在，以系统数据为准）`
+          : `✓ 已导入 ${d.count} 条新合同`;
+        toast(msg); loadP();
+      }
       else toast('上传失败：'+d.error);
     })
     .catch(err=>toast('网络错误：'+err.message));
