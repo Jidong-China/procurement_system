@@ -283,6 +283,7 @@ tr:last-child td{border-bottom:none}
   <div class="settings-card" style="max-width:640px">
     <h3>⏰ 日报推送设定</h3>
     <div class="info-box">每日定时向指定邮箱发送预警日报，包含 <strong>3天内</strong> 与 <strong>7天内</strong> 到期的应付款合同明细及金额合计。<br>需在 Render 环境变量中配置 <code>SMTP_HOST / SMTP_PORT / SMTP_USER / SMTP_PASS</code>。</div>
+    <div style="font-size:12px;font-weight:600;color:var(--ink3);margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid var(--sand3)">📧 应付款预警日报</div>
     <div class="fg"><label class="flbl">收件邮箱（多个用逗号分隔）</label><input id="seEmails" type="text" class="finp" placeholder="jidong@seatrustpower.com"></div>
     <div class="fr">
       <div class="fg"><label class="flbl">早间发送时间</label><input id="seTime" type="time" value="08:00" class="finp"></div>
@@ -293,9 +294,17 @@ tr:last-child td{border-bottom:none}
       <input type="checkbox" id="seEnabled" checked>
       <label for="seEnabled" style="font-size:12px;color:var(--ink3);cursor:pointer">启用定时推送</label>
     </div>
+    <hr style="border:none;border-top:1px solid var(--sand3);margin:18px 0">
+    <div style="font-size:12px;font-weight:600;color:var(--ink3);margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid var(--sand3)">📦 项目跟进状态日报</div>
+    <div class="fg"><label class="flbl">收件邮箱（多个用逗号分隔，与应付款日报独立）</label><input id="seProjEmails" type="text" class="finp" placeholder="project@example.com"></div>
+    <div style="margin-bottom:18px;display:flex;align-items:center;gap:8px">
+      <input type="checkbox" id="seProjEnabled" checked>
+      <label for="seProjEnabled" style="font-size:12px;color:var(--ink3);cursor:pointer">启用项目跟进日报（与应付款日报同时间推送）</label>
+    </div>
     <div style="display:flex;gap:8px">
       <button class="cbtn mbtn-ink" onclick="saveSched()" style="background:var(--ink);color:#fff;border-color:var(--ink)">保存设定</button>
-      <button class="cbtn mbtn-rust" onclick="sendNow()" style="background:var(--rust);color:#fff;border-color:var(--rust)">立即发送日报</button>
+      <button class="cbtn mbtn-rust" onclick="sendNow()" style="background:var(--rust);color:#fff;border-color:var(--rust)">立即发送应付款日报</button>
+      <button class="cbtn" onclick="sendProjNow()" style="background:var(--teal);color:#fff;border:none">立即发送项目日报</button>
     </div>
     <div id="seMsg" style="margin-top:10px;font-size:12px;min-height:16px"></div>
   </div>
@@ -1074,6 +1083,8 @@ async function loadSched(){
   const d=await(await fetch('/api/report_schedule')).json();
   if(d.emails!==undefined){
     document.getElementById('seEmails').value=d.emails||'';
+    document.getElementById('seProjEmails').value=d.proj_emails||'';
+    if(document.getElementById('seProjEnabled')) document.getElementById('seProjEnabled').checked=d.proj_report_enabled!==0;
     document.getElementById('seTime').value=d.send_time||'08:00';
         document.getElementById('seTime2').value=d.send_time2||'16:30';
     document.getElementById('seTitle').value=d.report_title||'';
@@ -1087,10 +1098,18 @@ async function loadSched(){
     :'<tr><td colspan="5" style="color:var(--ink4);padding:12px 0;text-align:center;font-size:12px">暂无记录</td></tr>';
 }
 async function saveSched(){
-  const r=await fetch('/api/report_schedule',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({emails:document.getElementById('seEmails').value.trim(),send_time:document.getElementById('seTime').value,send_time2:document.getElementById('seTime2').value,report_title:document.getElementById('seTitle').value.trim(),enabled:document.getElementById('seEnabled').checked})});
+  const r=await fetch('/api/report_schedule',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({emails:document.getElementById('seEmails').value.trim(),send_time:document.getElementById('seTime').value,send_time2:document.getElementById('seTime2').value,report_title:document.getElementById('seTitle').value.trim(),enabled:document.getElementById('seEnabled').checked,proj_emails:document.getElementById('seProjEmails').value.trim(),proj_report_enabled:document.getElementById('seProjEnabled').checked})});
   const d=await r.json();const m=document.getElementById('seMsg');
   if(d.ok){m.style.color='var(--teal)';m.textContent='✓ 设定已保存';}else{m.style.color='var(--rust)';m.textContent='保存失败：'+d.error;}
 }
+async function sendProjNow(){
+  const m=document.getElementById('seMsg');m.textContent='发送中...';m.style.color='var(--ink3)';
+  const r=await fetch('/api/report_schedule/send_proj_now',{method:'POST'});
+  const d=await r.json();
+  m.style.color=d.ok?'var(--teal)':'var(--rust)';
+  m.textContent=d.ok?'✓ 项目日报已发送':'发送失败：'+(d.error||'');
+}
+
 async function sendNow(){
   document.getElementById('seMsg').textContent='⏳ 发送中…';
   const r=await fetch('/api/report_schedule/send_now',{method:'POST'});
