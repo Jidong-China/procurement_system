@@ -248,10 +248,14 @@ tr:last-child td{border-bottom:none}
       <div class="proj-track">
         <table id="trktable" style="display:none;width:100%;border-collapse:collapse;min-width:900px">
           <thead><tr>
-            <th style="min-width:88px">供应商</th><th>货是否已好</th><th>验货照片</th>
-            <th>发货时间</th><th>目前所在地</th><th>箱单数据</th><th>唛头</th><th>是否开票</th>
-            <th>件数</th><th>净重kg</th><th>毛重kg</th><th>体积m³</th><th>备注</th>
-            {% if user.role == 'admin' %}<th>操作</th>{% endif %}
+            <th style="min-width:100px">供应商</th>
+            <th style="min-width:70px">货是否已好</th><th style="min-width:90px">交期</th>
+            <th style="min-width:70px">验货照片</th><th style="min-width:80px">发货时间</th>
+            <th style="min-width:80px">所在地</th><th style="min-width:60px">箱单</th>
+            <th style="min-width:60px">唛头</th><th style="min-width:60px">开票</th>
+            <th style="min-width:80px">备注</th><th style="min-width:60px">件数</th>
+            <th style="min-width:70px">净重kg</th><th style="min-width:70px">毛重kg</th>
+            <th style="min-width:70px">体积m³</th>
           </tr></thead>
           <tbody id="trktbody"></tbody>
           <tfoot id="trkfoot"></tfoot>
@@ -795,15 +799,16 @@ function filterProj(){renderProjList(document.getElementById('projSrch').value.t
 function renderProjList(q=''){
   const list=projs.filter(p=>!q||p.contract_no.toLowerCase().includes(q));
   const el=document.getElementById('projList');
-  if(!list.length){el.innerHTML='<div style="padding:20px;text-align:center;color:var(--ink4);font-size:12px">暂无项目</div>';return;}
-  const pct=p=>p.supplier_count?Math.round(p.ready_count/p.supplier_count*100):0;
+  if(!list.length){el.innerHTML='<div style="padding:20px;text-align:center;color:var(--ink4);font-size:12px">应付款台账暂无合同数据</div>';return;}
   el.innerHTML=list.map(p=>`
-    <div class="proj-item${p.contract_no===curProj?' active':''}" onclick="selectProj('${p.contract_no.replace(/'/g,"\\'")}')">
-      <div>
+    <div class="proj-item${p.contract_no===curProj?' active':''}" onclick="selectProj('${p.contract_no.replace(/'/g,"\'")}')">
+      <div style="flex:1;min-width:0">
         <div style="font-size:12px;font-weight:600;color:var(--ink)">${p.contract_no}</div>
-        <div style="font-size:10px;color:var(--ink4);margin-top:2px">${p.contract_name||''} ${p.responsible?'· '+p.responsible:''}</div>
+        <div style="font-size:10px;color:var(--ink4);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.our_company||p.responsible||''}</div>
       </div>
-      <span class="${pct(p)===100?'b-ok':p.ready_count>0?'b-warn':'b-gray'}">${p.ready_count}/${p.supplier_count}</span>
+      <span class="${p.tracking_ready>0&&p.tracking_ready>=p.supplier_count?'b-ok':p.tracking_ready>0?'b-warn':'b-gray'}" style="flex-shrink:0;margin-left:6px;font-size:9px">
+        ${p.tracking_total>0?p.tracking_ready+'/'+p.supplier_count+'货好':p.supplier_count+'供应商'}
+      </span>
     </div>`).join('');
 }
 
@@ -813,122 +818,98 @@ async function selectProj(cn){
   renderTrkTable(cn,rows);
 }
 
-function checkV(v){return v==='√'?`<span style="color:var(--teal);font-weight:600">√</span>`:v?`<span style="color:var(--ink3)">${v}</span>`:'<span style="color:var(--sand3)">—</span>';}
-function numV(v){return v!=null?`<span class="mono">${v}</span>`:'<span style="color:var(--sand3)">—</span>';}
-
-function edCell(id,field,val){
-  return IS_ADMIN?`<span contenteditable="true" class="edcell" onblur="saveCell(${id},'${field}',this)">${val!=null?val:''}</span>`:val||'<span style="color:var(--sand3)">—</span>';
+function esc(s){return String(s||'').replace(/'/g,"\\'")}
+function yesnoBtn(cn,supplier,field,noteField,val,note){
+  if(!IS_ADMIN)return`<div style="text-align:center">${val?'<span style="color:var(--teal);font-weight:700;font-size:14px">✓</span>':'<span style="color:var(--ink4)">—</span>'}${note?`<div style="font-size:9px;color:var(--ink4)">${note}</div>`:''}</div>`;
+  const on='background:#e6f7f4;border:1.5px solid var(--teal);color:var(--teal);font-weight:700';
+  const off='background:#fafafa;border:1.5px solid var(--sand3);color:var(--ink4)';
+  return`<div style="text-align:center">
+    <button onclick="toggleYN('${esc(cn)}','${esc(supplier)}','${field}',${val?1:0})"
+      style="font-size:11px;padding:3px 10px;border-radius:4px;cursor:pointer;${val?on:off}">${val?'✓ 是':'否'}</button>
+    <div style="font-size:9px;color:var(--rust);margin-top:3px;cursor:pointer;text-decoration:underline"
+      onclick="editTrkNote('${esc(cn)}','${esc(supplier)}','${noteField}','${esc(note||'')}')">${note||'+ 备注'}</div>
+  </div>`;
 }
-
+async function toggleYN(cn,supplier,field,cur){
+  await fetch('/api/projects/tracking',{method:'PUT',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({contract_no:cn,supplier,[field]:cur?0:1})});
+  const rows=await(await fetch(`/api/projects/${encodeURIComponent(cn)}`)).json();
+  renderTrkTable(cn,rows);loadProjs();
+}
+async function editTrkNote(cn,supplier,noteField,cur){
+  const v=prompt('备注（留空清除）:',cur||'');if(v===null)return;
+  await fetch('/api/projects/tracking',{method:'PUT',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({contract_no:cn,supplier,[noteField]:v.trim()})});
+  const rows=await(await fetch(`/api/projects/${encodeURIComponent(cn)}`)).json();
+  renderTrkTable(cn,rows);
+}
+function numCell(cn,supplier,field,val){
+  if(!IS_ADMIN)return`<div style="text-align:right;font-family:monospace;font-size:11px">${val!=null?Number(val).toLocaleString('zh-CN',{maximumFractionDigits:2}):'—'}</div>`;
+  return`<span contenteditable="true" class="edcell" data-cn="${cn}" data-supplier="${supplier}" data-field="${field}" data-type="number"
+    onblur="saveCell(this)" onfocus="this.style.background='var(--sand)';this.style.border='1px solid var(--rust)'"
+    style="display:block;text-align:right;font-family:monospace;font-size:11px;min-height:18px;outline:none;padding:2px 4px;border-radius:3px;cursor:text"
+  >${val!=null?val:''}</span>`;
+}
+function textCell(cn,supplier,field,val){
+  if(!IS_ADMIN)return`<div style="font-size:11px">${val||'—'}</div>`;
+  return`<span contenteditable="true" class="edcell" data-cn="${cn}" data-supplier="${supplier}" data-field="${field}" data-type="text"
+    onblur="saveCell(this)" onfocus="this.style.background='var(--sand)';this.style.border='1px solid var(--rust)'"
+    style="display:block;font-size:11px;min-height:18px;outline:none;padding:2px 4px;border-radius:3px;cursor:text;min-width:60px"
+  >${val!=null?val:''}</span>`;
+}
 function renderTrkTable(cn,rows){
   const proj=projs.find(p=>p.contract_no===cn)||{};
+  const readyCount=rows.filter(r=>r.goods_ready).length;
   document.getElementById('projHdr').innerHTML=`
-    <div><div style="font-weight:700;font-size:14px;color:var(--ink)">${cn}</div>
-    <div style="font-size:11px;color:var(--ink4);margin-top:2px">${proj.contract_name||''} ${proj.responsible?'· '+proj.responsible:''}</div></div>
+    <div><div style="font-weight:700;font-size:14px">${cn}</div>
+    <div style="font-size:11px;color:var(--ink4);margin-top:2px">${proj.our_company||''} ${proj.responsible?'· '+proj.responsible:''}</div></div>
     <div style="margin-left:auto;display:flex;align-items:center;gap:10px">
-      <span class="${rows.filter(r=>r.goods_ready==='√').length===rows.length&&rows.length>0?'b-ok':'b-warn'}">${rows.filter(r=>r.goods_ready==='√').length}/${rows.length} 货已好</span>
-      ${IS_ADMIN?`<button onclick="delProj('${cn.replace(/'/g,"\\'")}')" style="font-size:11px;color:var(--rust);background:none;border:none;cursor:pointer">删除项目</button>`:''}
+      <span class="${readyCount===rows.length&&rows.length>0?'b-ok':'b-warn'}">${readyCount}/${rows.length} 货已好</span>
     </div>`;
   document.getElementById('trkempty').style.display=rows.length?'none':'block';
   document.getElementById('trktable').style.display=rows.length?'':'none';
-  const totalQty=rows.reduce((s,r)=>s+(r.qty||0),0);
-  const totalNet=rows.reduce((s,r)=>s+(r.net_weight||0),0);
-  const totalGross=rows.reduce((s,r)=>s+(r.gross_weight||0),0);
-  const totalVol=rows.reduce((s,r)=>s+(r.volume||0),0);
+  const sum=f=>rows.reduce((s,r)=>s+(r[f]||0),0);
+  const fmt=(v,d=1)=>v?v.toLocaleString('zh-CN',{maximumFractionDigits:d}):'—';
   document.getElementById('trktbody').innerHTML=rows.map(r=>`
-    <tr id="tr-${r.id}">
-      <td style="font-weight:600">${edCell(r.id,'supplier',r.supplier)}</td>
-      <td>${IS_ADMIN?edCell(r.id,'goods_ready',r.goods_ready):checkV(r.goods_ready)}</td>
-      <td>${IS_ADMIN?edCell(r.id,'inspection_photo',r.inspection_photo):checkV(r.inspection_photo)}</td>
-      <td>${edCell(r.id,'ship_date',r.ship_date)}</td>
-      <td>${edCell(r.id,'location',r.location)}</td>
-      <td>${IS_ADMIN?edCell(r.id,'packing_list',r.packing_list):checkV(r.packing_list)}</td>
-      <td>${edCell(r.id,'label_ok',r.label_ok)}</td>
-      <td>${IS_ADMIN?edCell(r.id,'invoice_ok',r.invoice_ok):checkV(r.invoice_ok)}</td>
-      <td>${edCell(r.id,'qty',r.qty)}</td>
-      <td>${edCell(r.id,'net_weight',r.net_weight)}</td>
-      <td>${edCell(r.id,'gross_weight',r.gross_weight)}</td>
-      <td>${edCell(r.id,'volume',r.volume)}</td>
-      <td style="max-width:120px">${edCell(r.id,'remark',r.remark)}</td>
-      ${IS_ADMIN?`<td><button onclick="delRow(${r.id})" style="font-size:10px;color:var(--rust);background:none;border:none;cursor:pointer">删除</button></td>`:''}
+    <tr>
+      <td style="font-weight:600;font-size:12px;white-space:nowrap">${r.supplier}</td>
+      <td>${yesnoBtn(cn,r.supplier,'goods_ready','goods_ready_note',r.goods_ready,r.goods_ready_note)}</td>
+      <td>${textCell(cn,r.supplier,'delivery_date',r.delivery_date)}</td>
+      <td>${yesnoBtn(cn,r.supplier,'inspection_photo','inspection_note',r.inspection_photo,r.inspection_note)}</td>
+      <td>${textCell(cn,r.supplier,'ship_date',r.ship_date)}</td>
+      <td>${textCell(cn,r.supplier,'location',r.location)}</td>
+      <td>${yesnoBtn(cn,r.supplier,'packing_list','packing_note',r.packing_list,r.packing_note)}</td>
+      <td>${yesnoBtn(cn,r.supplier,'label_ok','label_note',r.label_ok,r.label_note)}</td>
+      <td>${yesnoBtn(cn,r.supplier,'invoice_ok','invoice_note',r.invoice_ok,r.invoice_note)}</td>
+      <td style="max-width:120px">${textCell(cn,r.supplier,'remark',r.remark)}</td>
+      <td>${numCell(cn,r.supplier,'qty',r.qty)}</td>
+      <td>${numCell(cn,r.supplier,'net_weight',r.net_weight)}</td>
+      <td>${numCell(cn,r.supplier,'gross_weight',r.gross_weight)}</td>
+      <td>${numCell(cn,r.supplier,'volume',r.volume)}</td>
     </tr>`).join('');
   document.getElementById('trkfoot').innerHTML=rows.length?`
-    <tr style="background:var(--sand);font-weight:600">
-      <td colspan="8" style="padding:8px 12px;color:var(--ink3);font-size:11px">合计</td>
-      <td class="mono">${totalQty||'—'}</td>
-      <td class="mono">${totalNet?totalNet.toFixed(1):'—'}</td>
-      <td class="mono">${totalGross?totalGross.toFixed(1):'—'}</td>
-      <td class="mono">${totalVol?totalVol.toFixed(2):'—'}</td>
-      <td colspan="${IS_ADMIN?2:1}"></td>
+    <tr style="background:var(--sand);font-weight:600;font-size:12px">
+      <td colspan="10" style="padding:8px 12px;color:var(--ink3)">合计 ${rows.length} 家供应商</td>
+      <td style="text-align:right;font-family:monospace">${fmt(sum('qty'),0)}</td>
+      <td style="text-align:right;font-family:monospace">${fmt(sum('net_weight'))}</td>
+      <td style="text-align:right;font-family:monospace">${fmt(sum('gross_weight'))}</td>
+      <td style="text-align:right;font-family:monospace">${fmt(sum('volume'),2)}</td>
     </tr>`:'';
-  if(IS_ADMIN){const a=document.getElementById('trkactions');a.style.display='flex';}
+  if(IS_ADMIN){const a=document.getElementById('trkactions');if(a)a.style.display='none';}
 }
-
-async function saveCell(id,field,el){
+async function saveCell(el){
+  const cn=el.dataset.cn,supplier=el.dataset.supplier,field=el.dataset.field;
+  el.style.background='';el.style.border='';
   let val=el.textContent.trim();
-  if(['qty','net_weight','gross_weight','volume'].includes(field)){val=parseFloat(val)||null;}
-  await fetch(`/api/projects/rows/${id}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({[field]:val})});
-  loadProjs();
+  if(el.dataset.type==='number'){val=parseFloat(val.replace(/,/g,''))||null;}
+  if(!val&&val!==0)val=el.dataset.type==='number'?null:'';
+  const res=await fetch('/api/projects/tracking',{method:'PUT',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({contract_no:cn,supplier,[field]:val})});
+  if((await res.json()).ok){loadProjs();toast('✓ 已保存');}
 }
 
-async function addTrkRow(){
-  if(!curProj)return;
-  const proj=projs.find(p=>p.contract_no===curProj)||{};
-  const r=await fetch(`/api/projects/${encodeURIComponent(curProj)}/rows`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contract_name:proj.contract_name||'',responsible:proj.responsible||''})});
-  if((await r.json()).ok){selectProj(curProj);loadProjs();}
-}
-
-async function delRow(id){
-  if(!confirm('确认删除？'))return;
-  const r=await fetch(`/api/projects/rows/${id}`,{method:'DELETE'});
-  if((await r.json()).ok){selectProj(curProj);loadProjs();toast('已删除');}
-}
-
-async function delProj(cn){
-  if(!confirm(`确认删除项目 ${cn} 的全部数据？`))return;
-  const r=await fetch(`/api/projects/${encodeURIComponent(cn)}`,{method:'DELETE'});
-  if((await r.json()).ok){curProj=null;loadProjs();document.getElementById('projHdr').innerHTML='<span style="color:var(--ink4);font-size:13px">← 从左侧选择合同</span>';document.getElementById('trktbody').innerHTML='';document.getElementById('trkempty').style.display='block';document.getElementById('trktable').style.display='none';toast('项目已删除');}
-}
-
-function showNewProj(){document.getElementById('newProjOv').classList.add('show');}
-async function createProj(){
-  const cn=document.getElementById('npCN').value.trim();
-  if(!cn){toast('请填写合同编号');return;}
-  const proj=projs.find(p=>p.contract_no===cn);
-  const r=await fetch(`/api/projects/${encodeURIComponent(cn)}/rows`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({supplier:'待填写',contract_name:document.getElementById('npName').value.trim(),responsible:document.getElementById('npResp').value})});
-  if((await r.json()).ok){closeOv('newProjOv');await loadProjs();selectProj(cn);switchTab('projects',document.querySelector('[data-tab="projects"]'));toast('✓ 项目已创建');}
-}
-
-// ── TRACKING XLSX IMPORT ──
-function handleTrkUpload(input){
-  if(!curProj){toast('请先选择合同号');return;}
-  const file=input.files[0];if(!file)return;toast('⏳ 解析…');
-  const reader=new FileReader();
-  reader.onload=async function(e){
-    try{
-      const wb=XLSX.read(e.target.result,{type:'array'});
-      const ws=wb.Sheets[wb.SheetNames[0]];
-      const raw=XLSX.utils.sheet_to_json(ws,{defval:''});
-      const cm={'供应商':'supplier','货是否已好/交期':'goods_ready','验货照片':'inspection_photo','发货时间':'ship_date','目前所在地':'location','箱单数据':'packing_list','唛头是否贴好':'label_ok','是否开票':'invoice_ok','件数':'qty','总净重/kg':'net_weight','总毛重/kg':'gross_weight','总体积/m3':'volume'};
-      const rows=raw.filter(r=>r['供应商']&&String(r['供应商']).trim()&&String(r['供应商']).trim()!=='总计：').map(r=>{
-        const out={};
-        Object.entries(cm).forEach(([cn2,key])=>{
-          let v=r[cn2]!==undefined?r[cn2]:'';
-          if(['qty','net_weight','gross_weight','volume'].includes(key)){const n=parseFloat(String(v).replace(/,/g,''));out[key]=isNaN(n)?null:n;}
-          else out[key]=String(v).trim();
-        });
-        return out;
-      });
-      const proj=projs.find(p=>p.contract_no===curProj)||{};
-      const res=await fetch(`/api/projects/${encodeURIComponent(curProj)}/import`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({rows,contract_name:proj.contract_name||''})});
-      const d=await res.json();
-      if(d.ok){toast(`✓ 已导入 ${d.count} 条`);selectProj(curProj);loadProjs();}else toast('导入失败：'+d.error);
-    }catch(err){toast('解析失败：'+err.message);}
-  };
-  reader.readAsArrayBuffer(file);input.value='';
-}
-
-// ── SCHEDULE ──
+// ── SCHEDULE ──// ── SCHEDULE ──
 async function loadSched(){
   const d=await(await fetch('/api/report_schedule')).json();
   if(d.emails!==undefined){
