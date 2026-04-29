@@ -112,6 +112,8 @@ def init_db():
             send_time2 TEXT DEFAULT '16:30',
             report_title TEXT DEFAULT '采购应付款每日预警日报',
             enabled INTEGER DEFAULT 1,
+            proj_emails TEXT DEFAULT '',
+            proj_report_enabled INTEGER DEFAULT 1,
             updated_at TEXT DEFAULT (datetime('now'))
         );
         CREATE TABLE IF NOT EXISTS report_log (
@@ -157,11 +159,16 @@ def init_db():
         except: pass
     # goods_ready/inspection_photo/packing_list/label_ok/invoice_ok 改成 INTEGER（旧数据可能是TEXT）
     # 直接 try，旧版本列已存在时不报错
-    # 兼容旧数据库：加 send_time2 列
-    try:
-        db.execute("ALTER TABLE report_schedule ADD COLUMN send_time2 TEXT DEFAULT '16:30'")
-        db.commit()
-    except: pass
+    # 兼容旧数据库：加新列
+    for _col, _def in [
+        ('send_time2', "TEXT DEFAULT '16:30'"),
+        ('proj_emails', "TEXT DEFAULT ''"),
+        ('proj_report_enabled', 'INTEGER DEFAULT 1'),
+    ]:
+        try:
+            db.execute(f'ALTER TABLE report_schedule ADD COLUMN {_col} {_def}')
+            db.commit()
+        except: pass
     # 设置默认邮箱（如果还未设置）
     try:
         row = db.execute("SELECT emails FROM report_schedule WHERE id=1").fetchone()
@@ -432,6 +439,28 @@ def api_upload_excel():
     return jsonify({'ok':True,'count':inserted,'skipped':skipped,'batch':batch})
 
 
+@app.route('/api/payables/add', methods=['POST'])
+@admin_required
+def api_payable_add():
+    d = request.json
+    cn = (d.get('contract_no') or '').strip()
+    supplier = (d.get('supplier') or '').strip()
+    if not cn: return jsonify({'error':'合同编号不能为空'}), 400
+    if not supplier: return jsonify({'error':'供应商不能为空'}), 400
+    PREFIX_MAP = {'TSD':'田少东','ZFC':'张翡翠','ZHX':'赵虹','ME':'赵虹'}
+    sheet = d.get('sheet') or next((v for p,v in PREFIX_MAP.items() if cn.upper().startswith(p)), None)
+    if not sheet: return jsonify({'error':'合同编号前缀非法，只允许 TSD/ZFC/ZHX/ME'}), 400
+    batch = datetime.now().strftime('%Y%m%d_%H%M%S')
+    sql = ('INSERT INTO payables(sheet,sign_date,contract_no,our_company,supplier,'
+           'total_amount,payment_terms,prepayment,tail_payment,due_date,due_date_raw,notes,upload_batch)'
+           ' VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)')
+    cur = execute(sql, (sheet, d.get('sign_date'), cn, d.get('our_company',''), supplier,
+         d.get('total_amount'), d.get('payment_terms',''),
+         d.get('prepayment'), d.get('tail_payment'),
+         d.get('due_date'), d.get('due_date_raw',''),
+         d.get('notes',''), batch))
+    return jsonify({'ok':True,'id':cur.lastrowid})
+
 @app.route('/api/payables/<int:pid>/subpaid', methods=['PUT'])
 @admin_required
 def api_mark_subpaid(pid):
@@ -619,9 +648,10 @@ def api_sched_get():
 @admin_required
 def api_sched_put():
     d=request.json
-    execute("UPDATE report_schedule SET emails=?,send_time=?,send_time2=?,report_title=?,enabled=?,updated_at=datetime('now') WHERE id=1",
+    execute("UPDATE report_schedule SET emails=?,send_time=?,send_time2=?,report_title=?,enabled=?,proj_emails=?,proj_report_enabled=?,updated_at=datetime('now') WHERE id=1",
             (d.get('emails',''),d.get('send_time','08:00'),d.get('send_time2','16:30'),
-             d.get('report_title','采购应付款每日预警日报'),1 if d.get('enabled',True) else 0))
+             d.get('report_title','采购应付款每日预警日报'),1 if d.get('enabled',True) else 0,
+             d.get('proj_emails',''),1 if d.get('proj_report_enabled',True) else 0))
     restart_scheduler()
     return jsonify({'ok':True})
 
@@ -630,6 +660,12 @@ def api_sched_put():
 def api_send_now():
     ok,msg=send_daily_report()
     return jsonify({'ok':ok,'msg':msg}) if ok else (jsonify({'error':msg}),500)
+
+@app.route('/api/report_schedule/send_proj_now', methods=['POST'])
+@admin_required
+def api_send_proj_now():
+    ok,msg=send_project_report()
+    return jsonify({'ok':ok,'message':msg,'error':None if ok else msg})
 
 @app.route('/api/report_log')
 @login_required
@@ -704,7 +740,7 @@ if HAS_SCHEDULER:
 
 def restart_scheduler():
     if not HAS_SCHEDULER: return
-    for jid in ['dr1','dr2']:
+    for jid in ['dr1','dr2','pr1','pr2']:
         if scheduler.get_job(jid): scheduler.remove_job(jid)
     with app.app_context():
         s=query("SELECT * FROM report_schedule WHERE id=1",one=True)
@@ -717,8 +753,21 @@ def restart_scheduler():
                     h,m=t.strip().split(':')
                     scheduler.add_job(send_daily_report,'cron',hour=int(h),minute=int(m),
                                       id=f'dr{i}',replace_existing=True)
-                    print(f"[Scheduler] 日报{i}: 每天 {t}")
+                    print(f"[Scheduler] 应付款日报{i}: 每天 {t}")
                 except Exception as e: print(f"[Scheduler] 定时{i}失败: {e}")
+        # 项目跟进日报
+        proj_em = s['proj_emails'] if s and s['proj_emails'] else ''
+        if s and s['proj_report_enabled'] and proj_em:
+            t1 = s['send_time'] if s['send_time'] else '08:00'
+            t2 = s['send_time2'] if s['send_time2'] else '16:30'
+            for i, t in enumerate([t1, t2], 1):
+                try:
+                    if not t: continue
+                    h,m=t.strip().split(':')
+                    scheduler.add_job(send_project_report,'cron',hour=int(h),minute=int(m),
+                                      id=f'pr{i}',replace_existing=True)
+                    print(f"[Scheduler] 项目日报{i}: 每天 {t}")
+                except Exception as e: print(f"[Scheduler] 项目定时{i}失败: {e}")
 
 
 @app.route('/download_template')
