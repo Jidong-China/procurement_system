@@ -83,18 +83,24 @@ def init_db():
             contract_name TEXT DEFAULT '',
             responsible TEXT DEFAULT '',
             supplier TEXT NOT NULL DEFAULT '',
-            goods_ready TEXT DEFAULT '',
-            inspection_photo TEXT DEFAULT '',
+            goods_ready INTEGER DEFAULT 0,
+            goods_ready_note TEXT DEFAULT '',
+            delivery_date TEXT DEFAULT '',
+            inspection_photo INTEGER DEFAULT 0,
+            inspection_note TEXT DEFAULT '',
             ship_date TEXT DEFAULT '',
             location TEXT DEFAULT '',
-            packing_list TEXT DEFAULT '',
-            label_ok TEXT DEFAULT '',
-            invoice_ok TEXT DEFAULT '',
+            packing_list INTEGER DEFAULT 0,
+            packing_note TEXT DEFAULT '',
+            label_ok INTEGER DEFAULT 0,
+            label_note TEXT DEFAULT '',
+            invoice_ok INTEGER DEFAULT 0,
+            invoice_note TEXT DEFAULT '',
+            remark TEXT DEFAULT '',
             qty REAL,
             net_weight REAL,
             gross_weight REAL,
             volume REAL,
-            remark TEXT DEFAULT '',
             sort_order INTEGER DEFAULT 0,
             created_at TEXT DEFAULT (datetime('now')),
             updated_at TEXT DEFAULT (datetime('now'))
@@ -138,6 +144,19 @@ def init_db():
             db.execute(f"ALTER TABLE payables ADD COLUMN {col} {default}")
             db.commit()
         except: pass
+    # 兼容 project_tracking 新字段
+    trk_cols = [
+        ('goods_ready_note','TEXT DEFAULT ""'),('delivery_date','TEXT DEFAULT ""'),
+        ('inspection_note','TEXT DEFAULT ""'),('packing_note','TEXT DEFAULT ""'),
+        ('label_note','TEXT DEFAULT ""'),('invoice_note','TEXT DEFAULT ""'),
+    ]
+    for col, default in trk_cols:
+        try:
+            db.execute(f"ALTER TABLE project_tracking ADD COLUMN {col} {default}")
+            db.commit()
+        except: pass
+    # goods_ready/inspection_photo/packing_list/label_ok/invoice_ok 改成 INTEGER（旧数据可能是TEXT）
+    # 直接 try，旧版本列已存在时不报错
     # 兼容旧数据库：加 send_time2 列
     try:
         db.execute("ALTER TABLE report_schedule ADD COLUMN send_time2 TEXT DEFAULT '16:30'")
@@ -476,75 +495,118 @@ def api_mark_paid(pid):
 @app.route('/api/projects')
 @login_required
 def api_projects():
-    rows=query("""SELECT contract_no,contract_name,responsible,
-                  COUNT(*) as supplier_count,
-                  SUM(CASE WHEN goods_ready='√' THEN 1 ELSE 0 END) as ready_count,
-                  MAX(updated_at) as last_updated
-                  FROM project_tracking GROUP BY contract_no ORDER BY contract_no DESC""")
-    return jsonify([dict(r) for r in rows])
+    # 从应付款模块读取所有合同号（去重），带合同基础信息
+    rows = query("""
+        SELECT contract_no, our_company, sheet,
+               COUNT(*) as supplier_count,
+               MIN(sign_date) as sign_date
+        FROM payables
+        WHERE contract_no != ''
+        GROUP BY contract_no
+        ORDER BY contract_no DESC
+    """)
+    result = []
+    for r in rows:
+        cn = r['contract_no']
+        trk = query("SELECT COUNT(*) as total, SUM(CASE WHEN goods_ready='√' OR goods_ready='✓' THEN 1 ELSE 0 END) as ready FROM project_tracking WHERE contract_no=?", (cn,), one=True)
+        result.append({
+            'contract_no': cn,
+            'our_company': r['our_company'] or '',
+            'responsible': r['sheet'] or '',
+            'supplier_count': r['supplier_count'],
+            'sign_date': r['sign_date'] or '',
+            'tracking_total': trk['total'] if trk else 0,
+            'tracking_ready': trk['ready'] if trk else 0,
+        })
+    return jsonify(result)
 
 @app.route('/api/projects/<path:cn>')
 @login_required
 def api_project_get(cn):
-    return jsonify([dict(r) for r in query("SELECT * FROM project_tracking WHERE contract_no=? ORDER BY sort_order,id",(cn,))])
+    # 从应付款读取该合同下所有供应商
+    payables = query("SELECT id,supplier,total_amount,prepayment,tail_payment,due_date FROM payables WHERE contract_no=? ORDER BY id", (cn,))
+    result = []
+    for p in payables:
+        trk = query("SELECT * FROM project_tracking WHERE contract_no=? AND supplier=?", (cn, p['supplier']), one=True)
+        def tv(f, default=''): return trk[f] if trk and trk[f] is not None else default
+        row = {
+            'payable_id': p['id'],
+            'supplier': p['supplier'],
+            'total_amount': p['total_amount'],
+            'due_date': p['due_date'],
+            'tracking_id': trk['id'] if trk else None,
+            'goods_ready': 1 if tv('goods_ready') in (1,'1','√','✓',True) else 0,
+            'goods_ready_note': tv('goods_ready_note'),
+            'delivery_date': tv('delivery_date'),
+            'inspection_photo': 1 if tv('inspection_photo') in (1,'1','√','✓',True) else 0,
+            'inspection_note': tv('inspection_note'),
+            'ship_date': tv('ship_date'),
+            'location': tv('location'),
+            'packing_list': 1 if tv('packing_list') in (1,'1','√','✓',True) else 0,
+            'packing_note': tv('packing_note'),
+            'label_ok': 1 if tv('label_ok') in (1,'1','√','✓',True) else 0,
+            'label_note': tv('label_note'),
+            'invoice_ok': 1 if tv('invoice_ok') in (1,'1','√','✓',True) else 0,
+            'invoice_note': tv('invoice_note'),
+            'remark': tv('remark'),
+            'qty': trk['qty'] if trk else None,
+            'net_weight': trk['net_weight'] if trk else None,
+            'gross_weight': trk['gross_weight'] if trk else None,
+            'volume': trk['volume'] if trk else None,
+        }
+        result.append(row)
+    return jsonify(result)
 
-@app.route('/api/projects/<path:cn>/rows', methods=['POST'])
+@app.route('/api/projects/tracking', methods=['PUT'])
 @admin_required
-def api_project_add_row(cn):
-    d=request.json
-    cur=execute("""INSERT INTO project_tracking(contract_no,contract_name,responsible,supplier,
-                   goods_ready,inspection_photo,ship_date,location,packing_list,label_ok,invoice_ok,
-                   qty,net_weight,gross_weight,volume,remark,sort_order)
-                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                (cn,d.get('contract_name',''),d.get('responsible',''),d.get('supplier','新供应商'),
-                 '','','','','','','',None,None,None,None,'',d.get('sort_order',0)))
-    return jsonify({'ok':True,'id':cur.lastrowid})
+def api_project_tracking_put():
+    d = request.json
+    cn = d.get('contract_no','')
+    supplier = d.get('supplier','')
+    if not cn or not supplier:
+        return jsonify({'error':'缺少合同号或供应商'}), 400
+    allowed = ['goods_ready','goods_ready_note','delivery_date',
+               'inspection_photo','inspection_note','ship_date','location',
+               'packing_list','packing_note','label_ok','label_note',
+               'invoice_ok','invoice_note','remark',
+               'qty','net_weight','gross_weight','volume']
+    existing = query("SELECT id FROM project_tracking WHERE contract_no=? AND supplier=?", (cn, supplier), one=True)
+    if existing:
+        fields, vals = [], []
+        for k in allowed:
+            if k in d:
+                fields.append(f"{k}=?")
+                vals.append(d[k])
+        if fields:
+            fields.append("updated_at=datetime('now')")
+            vals.append(existing['id'])
+            execute(f"UPDATE project_tracking SET {', '.join(fields)} WHERE id=?", vals)
+        return jsonify({'ok': True, 'id': existing['id']})
+    else:
+        cur = execute("""INSERT INTO project_tracking(
+                         contract_no,supplier,
+                         goods_ready,goods_ready_note,delivery_date,
+                         inspection_photo,inspection_note,ship_date,location,
+                         packing_list,packing_note,label_ok,label_note,
+                         invoice_ok,invoice_note,remark,
+                         qty,net_weight,gross_weight,volume)
+                         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                      (cn, supplier,
+                       d.get('goods_ready',0), d.get('goods_ready_note',''), d.get('delivery_date',''),
+                       d.get('inspection_photo',0), d.get('inspection_note',''),
+                       d.get('ship_date',''), d.get('location',''),
+                       d.get('packing_list',0), d.get('packing_note',''),
+                       d.get('label_ok',0), d.get('label_note',''),
+                       d.get('invoice_ok',0), d.get('invoice_note',''),
+                       d.get('remark',''),
+                       d.get('qty'), d.get('net_weight'), d.get('gross_weight'), d.get('volume')))
+        return jsonify({'ok': True, 'id': cur.lastrowid})
 
-@app.route('/api/projects/rows/<int:rid>', methods=['PUT'])
+@app.route('/api/projects/clear_all', methods=['POST'])
 @admin_required
-def api_project_row_put(rid):
-    d=request.json
-    allowed=['supplier','goods_ready','inspection_photo','ship_date','location','packing_list',
-             'label_ok','invoice_ok','qty','net_weight','gross_weight','volume','remark',
-             'sort_order','contract_name','responsible']
-    fields,vals=[],[]
-    for k in allowed:
-        if k in d: fields.append(f"{k}=?"); vals.append(d[k])
-    if not fields: return jsonify({'error':'无内容'}),400
-    fields.append("updated_at=datetime('now')"); vals.append(rid)
-    execute(f"UPDATE project_tracking SET {', '.join(fields)} WHERE id=?",vals)
-    return jsonify({'ok':True})
-
-@app.route('/api/projects/rows/<int:rid>', methods=['DELETE'])
-@admin_required
-def api_project_row_del(rid):
-    execute("DELETE FROM project_tracking WHERE id=?",(rid,))
-    return jsonify({'ok':True})
-
-@app.route('/api/projects/<path:cn>', methods=['DELETE'])
-@admin_required
-def api_project_del(cn):
-    execute("DELETE FROM project_tracking WHERE contract_no=?",(cn,))
-    return jsonify({'ok':True})
-
-@app.route('/api/projects/<path:cn>/import', methods=['POST'])
-@admin_required
-def api_project_import(cn):
-    d=request.json; rows=d.get('rows',[])
-    execute("DELETE FROM project_tracking WHERE contract_no=?",(cn,))
-    for i,r in enumerate(rows):
-        execute("""INSERT INTO project_tracking(contract_no,contract_name,responsible,supplier,
-                   goods_ready,inspection_photo,ship_date,location,packing_list,label_ok,invoice_ok,
-                   qty,net_weight,gross_weight,volume,remark,sort_order)
-                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                (cn,d.get('contract_name',''),d.get('responsible',''),
-                 r.get('supplier',''),r.get('goods_ready',''),r.get('inspection_photo',''),
-                 r.get('ship_date',''),r.get('location',''),r.get('packing_list',''),
-                 r.get('label_ok',''),r.get('invoice_ok',''),
-                 r.get('qty'),r.get('net_weight'),r.get('gross_weight'),r.get('volume'),
-                 r.get('remark',''),i))
-    return jsonify({'ok':True,'count':len(rows)})
-
+def api_project_clear():
+    execute("DELETE FROM project_tracking")
+    return jsonify({'ok': True})
 # ── Report schedule ───────────────────────────────────────────────────────────
 
 @app.route('/api/report_schedule')
