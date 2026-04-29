@@ -143,6 +143,7 @@ tr:last-child td{border-bottom:none}
     <div class="hpill" id="today"></div>
     {% if user.role == 'admin' %}
     <a href="/download_template" class="hbtn hbtn-ghost" title="下载Excel导入模版" style="text-decoration:none;font-size:12px">↓ 模版</a>
+    <button class="hbtn" onclick="openNewRecord()" style="background:var(--rust);color:#fff;border:none;font-size:12px">＋ 新增合同</button>
     <label class="hbtn-upload" title="上传应付款台账Excel">
       ↑ 更新台账
       <input type="file" id="xlsxUpload" accept=".xlsx,.xls" style="display:none" onchange="handleXlsxUpload(this)">
@@ -191,6 +192,7 @@ tr:last-child td{border-bottom:none}
       <option value="urgent">紧急（3天）</option><option value="warning">预警（7天）</option>
       <option value="normal">正常</option><option value="past">已过期</option>
       <option value="unknown">日期未定</option><option value="paid">已付款</option>
+      <option value="unpaid">未付款</option>
     </select>
     <select id="pSrt" class="sel" onchange="renderP()">
       <option value="due_asc">到期↑</option><option value="due_desc">到期↓</option><option value="amt_desc">金额↓</option>
@@ -335,6 +337,83 @@ tr:last-child td{border-bottom:none}
 {% endif %}
 
 <!-- ── 详情弹窗 ── -->
+<!-- 新增合同弹窗 -->
+<div class="ov" id="newRecOv" onclick="if(event.target===this)closeNewRecord()" style="z-index:300">
+  <div class="modal" onclick="event.stopPropagation()" style="max-width:560px;width:95%;max-height:90vh;overflow-y:auto">
+    <div class="modal-hd">
+      <span class="modal-title">＋ 新增合同记录</span>
+      <span class="modal-close" onclick="closeNewRecord()">×</span>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:4px 0">
+      <div style="grid-column:1/-1">
+        <label class="flbl">合同编号 <span style="color:var(--rust)">*</span></label>
+        <input id="nr_contract_no" placeholder="如 TSD2601001XX01（必填）"
+          style="width:100%;padding:8px 10px;border:1.5px solid var(--sand3);border-radius:6px;font-family:inherit;font-size:12px;outline:none;box-sizing:border-box">
+        <div id="nr_cn_err" style="color:var(--rust);font-size:11px;margin-top:3px;display:none"></div>
+      </div>
+      <div style="grid-column:1/-1">
+        <label class="flbl">供应商 <span style="color:var(--rust)">*</span></label>
+        <input id="nr_supplier" placeholder="供应商全称（必填）"
+          style="width:100%;padding:8px 10px;border:1.5px solid var(--sand3);border-radius:6px;font-family:inherit;font-size:12px;outline:none;box-sizing:border-box">
+      </div>
+      <div>
+        <label class="flbl">我方公司</label>
+        <input id="nr_our_company" placeholder="我方签约公司"
+          style="width:100%;padding:8px 10px;border:1.5px solid var(--sand3);border-radius:6px;font-family:inherit;font-size:12px;outline:none;box-sizing:border-box">
+      </div>
+      <div>
+        <label class="flbl">签订日期</label>
+        <input id="nr_sign_date" type="date"
+          style="width:100%;padding:8px 10px;border:1.5px solid var(--sand3);border-radius:6px;font-family:inherit;font-size:12px;outline:none;box-sizing:border-box">
+      </div>
+      <div>
+        <label class="flbl">合同总金额</label>
+        <input id="nr_total" type="number" placeholder="数字，如 141100" oninput="nrSyncPct('pre');nrSyncPct('tail')"
+          style="width:100%;padding:8px 10px;border:1.5px solid var(--sand3);border-radius:6px;font-family:inherit;font-size:12px;outline:none;box-sizing:border-box">
+      </div>
+      <div>
+        <label class="flbl">实际交货期</label>
+        <input id="nr_due_date" type="date"
+          style="width:100%;padding:8px 10px;border:1.5px solid var(--sand3);border-radius:6px;font-family:inherit;font-size:12px;outline:none;box-sizing:border-box">
+      </div>
+      <div style="grid-column:1/-1">
+        <label class="flbl">付款方式</label>
+        <input id="nr_payment_terms" placeholder="如：20%预付款，验货合格后80%尾款"
+          style="width:100%;padding:8px 10px;border:1.5px solid var(--sand3);border-radius:6px;font-family:inherit;font-size:12px;outline:none;box-sizing:border-box">
+      </div>
+      <div>
+        <label class="flbl">预付款金额</label>
+        <input id="nr_prepayment" type="number" placeholder="数字" oninput="nrSyncPct('pre')"
+          style="width:100%;padding:8px 10px;border:1.5px solid var(--sand3);border-radius:6px;font-family:inherit;font-size:12px;outline:none;box-sizing:border-box">
+      </div>
+      <div>
+        <label class="flbl">预付款比例 %</label>
+        <input id="nr_prepayment_pct" type="number" placeholder="%" oninput="nrSyncAmt('pre')"
+          style="width:100%;padding:8px 10px;border:1.5px solid var(--sand3);border-radius:6px;font-family:inherit;font-size:12px;outline:none;box-sizing:border-box">
+      </div>
+      <div>
+        <label class="flbl">尾款金额</label>
+        <input id="nr_tail" type="number" placeholder="数字" oninput="nrSyncPct('tail')"
+          style="width:100%;padding:8px 10px;border:1.5px solid var(--sand3);border-radius:6px;font-family:inherit;font-size:12px;outline:none;box-sizing:border-box">
+      </div>
+      <div>
+        <label class="flbl">尾款比例 %</label>
+        <input id="nr_tail_pct" type="number" placeholder="%" oninput="nrSyncAmt('tail')"
+          style="width:100%;padding:8px 10px;border:1.5px solid var(--sand3);border-radius:6px;font-family:inherit;font-size:12px;outline:none;box-sizing:border-box">
+      </div>
+      <div style="grid-column:1/-1">
+        <label class="flbl">备注</label>
+        <input id="nr_notes" placeholder="备注信息"
+          style="width:100%;padding:8px 10px;border:1.5px solid var(--sand3);border-radius:6px;font-family:inherit;font-size:12px;outline:none;box-sizing:border-box">
+      </div>
+    </div>
+    <div style="margin-top:20px;display:flex;gap:10px;justify-content:flex-end">
+      <button onclick="closeNewRecord()" style="padding:8px 20px;border:1px solid var(--sand3);border-radius:6px;background:var(--sand);cursor:pointer;font-family:inherit;font-size:12px">取消</button>
+      <button onclick="submitNewRecord()" style="padding:8px 24px;border:none;border-radius:6px;background:var(--rust);color:#fff;cursor:pointer;font-family:inherit;font-size:12px;font-weight:600">保存</button>
+    </div>
+  </div>
+</div>
+
 <div class="ov" id="detailOv">
   <div class="modal" style="width:500px">
     <div class="modal-hd"><span class="modal-title">合同详情</span><span class="modal-close" onclick="closeOv('detailOv')">×</span></div>
@@ -471,14 +550,36 @@ async function loadP(){
 
 function calcStats(){
   let u=0,w=0,n=0,ua=0,wa=0,na=0,ta=0;
+  const cos={};
   allP.forEach(r=>{
-    const s=pst(r),amt=(r.tail_payment||r.total_amount||0);ta+=amt;
-    if(s==='urgent'){u++;ua+=amt;}else if(s==='warning'){w++;wa+=amt;}else if(s==='normal'){n++;na+=amt;}
+    const s=pst(r);
+    // 待付金额 = 预付款未付 + 尾款未付（两者都没有时用总额）
+    const pre=(r.prepayment&&!r.prepayment_paid)?r.prepayment:0;
+    const tail=(r.tail_payment&&!r.tail_paid)?r.tail_payment:0;
+    const amt=pre+tail||(r.is_paid?0:r.total_amount||0);
+    ta+=r.total_amount||0;
+    const co=r.our_company||'其他';
+    if(!cos[co])cos[co]={u:0,w:0,n:0};
+    if(s==='urgent'){u++;ua+=amt;cos[co].u+=amt;}
+    else if(s==='warning'){w++;wa+=amt;cos[co].w+=amt;}
+    else if(s==='normal'){n++;na+=amt;cos[co].n+=amt;}
   });
+  // 公司简称（去掉有限公司等后缀，最多6字）
+  const short=s=>(s||'').replace(/有限公司|进出口|集团|股份/g,'').trim().slice(0,6);
+  function coLines(key){
+    return Object.entries(cos).filter(([,v])=>v[key]>0)
+      .sort((a,b)=>b[1][key]-a[1][key])
+      .map(([co,v])=>`<div style="display:flex;justify-content:space-between;gap:8px;font-size:10px;color:var(--ink3);margin-top:3px;padding-top:3px;border-top:1px dashed var(--sand3)">
+        <span style="white-space:nowrap">${short(co)}</span>
+        <span style="font-family:monospace;white-space:nowrap">¥${fas(v[key])}</span>
+      </div>`).join('');
+  }
   document.getElementById('n-u').textContent=u;document.getElementById('n-w').textContent=w;
   document.getElementById('n-n').textContent=n;document.getElementById('n-t').textContent=allP.length;
-  document.getElementById('a-u').textContent='应付 '+fas(ua);document.getElementById('a-w').textContent='应付 '+fas(wa);
-  document.getElementById('a-n').textContent='应付 '+fas(na);document.getElementById('a-t').textContent='总额 '+fas(ta);
+  document.getElementById('a-u').innerHTML='<div style="margin-bottom:2px">应付 '+fas(ua)+'</div>'+coLines('u');
+  document.getElementById('a-w').innerHTML='<div style="margin-bottom:2px">应付 '+fas(wa)+'</div>'+coLines('w');
+  document.getElementById('a-n').innerHTML='<div style="margin-bottom:2px">应付 '+fas(na)+'</div>'+coLines('n');
+  document.getElementById('a-t').textContent='总额 '+fas(ta);
 }
 
 function qFilter(s){qf=s==='all'?'':s;document.getElementById('pSta').value='';document.querySelectorAll('.sc').forEach(el=>el.classList.remove('active'));if(s!=='all')document.querySelector('.s'+s[0]).classList.add('active');renderP();}
@@ -493,6 +594,12 @@ function renderP(){
   filtP=allP.filter(r=>{
     if(fp&&r.our_company!==fp)return false;if(fSup&&r.supplier!==fSup)return false;if(fCon&&r.contract_no!==fCon)return false;
     if(q&&!(r.supplier+r.contract_no+(r.our_company||'')+(r.notes||'')).toLowerCase().includes(q))return false;
+    if(fs==='unpaid'){
+      const hasPre=r.prepayment&&r.prepayment>0;
+      const hasTail=r.tail_payment&&r.tail_payment>0;
+      const anyUnpaid=(hasPre&&!r.prepayment_paid)||(hasTail&&!r.tail_paid);
+      return anyUnpaid&&!r.is_paid;
+    }
     if(fs)return pst(r)===fs;return true;
   });
   filtP.sort((a,b)=>{
@@ -659,6 +766,59 @@ function editField(id, field, el, type){
   }
   input.addEventListener('blur',save);
   input.addEventListener('keydown',e=>{if(e.key==='Enter')input.blur();if(e.key==='Escape')input.blur();});
+}
+
+// ── 新增合同 ──
+const PREFIX_JS={TSD:'田少东',ZFC:'张翡翠',ZHX:'赵虹',ME:'赵虹'};
+function guessSheet(cn){
+  cn=(cn||'').trim().toUpperCase();
+  for(const[p,v]of Object.entries(PREFIX_JS)){if(cn.startsWith(p))return v;}
+  return null;
+}
+function openNewRecord(){
+  ['nr_contract_no','nr_supplier','nr_our_company','nr_sign_date','nr_total',
+   'nr_due_date','nr_payment_terms','nr_prepayment','nr_prepayment_pct','nr_tail','nr_tail_pct','nr_notes']
+    .forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
+  document.getElementById('nr_cn_err').style.display='none';
+  document.getElementById('newRecOv').classList.add('show');
+  setTimeout(()=>document.getElementById('nr_contract_no').focus(),100);
+}
+function closeNewRecord(){document.getElementById('newRecOv').classList.remove('show');}
+function nrSyncPct(t){
+  const total=parseFloat(document.getElementById('nr_total').value)||0;if(!total)return;
+  const amt=parseFloat(document.getElementById(t==='pre'?'nr_prepayment':'nr_tail').value)||0;
+  document.getElementById(t==='pre'?'nr_prepayment_pct':'nr_tail_pct').value=amt?Math.round(amt/total*10000)/100:'';
+}
+function nrSyncAmt(t){
+  const total=parseFloat(document.getElementById('nr_total').value)||0;if(!total)return;
+  const pct=parseFloat(document.getElementById(t==='pre'?'nr_prepayment_pct':'nr_tail_pct').value)||0;
+  document.getElementById(t==='pre'?'nr_prepayment':'nr_tail').value=pct?Math.round(total*pct/100*100)/100:'';
+}
+async function submitNewRecord(){
+  const cn=(document.getElementById('nr_contract_no').value||'').trim();
+  const supplier=(document.getElementById('nr_supplier').value||'').trim();
+  const errEl=document.getElementById('nr_cn_err');
+  if(!cn){errEl.textContent='合同编号不能为空';errEl.style.display='block';return;}
+  const sheet=guessSheet(cn);
+  if(!sheet){errEl.textContent='前缀非法，只允许 TSD / ZFC / ZHX / ME 开头';errEl.style.display='block';return;}
+  if(!supplier){toast('供应商不能为空');return;}
+  errEl.style.display='none';
+  const body={sheet,contract_no:cn,supplier,
+    our_company:document.getElementById('nr_our_company').value.trim(),
+    sign_date:document.getElementById('nr_sign_date').value||null,
+    total_amount:parseFloat(document.getElementById('nr_total').value)||null,
+    due_date:document.getElementById('nr_due_date').value||null,
+    due_date_raw:document.getElementById('nr_due_date').value||'',
+    payment_terms:document.getElementById('nr_payment_terms').value.trim(),
+    prepayment:parseFloat(document.getElementById('nr_prepayment').value)||null,
+    tail_payment:parseFloat(document.getElementById('nr_tail').value)||null,
+    notes:document.getElementById('nr_notes').value.trim(),
+  };
+  const res=await fetch('/api/payables/add',{method:'POST',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const d=await res.json();
+  if(d.ok){closeNewRecord();loadP();toast('✓ 合同已新增');}
+  else toast('保存失败：'+(d.error||'未知错误'));
 }
 
 function syncActualPayDate(){
