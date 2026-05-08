@@ -754,7 +754,7 @@ def send_project_report():
                 cn = c['contract_no']
                 suppliers = query('SELECT id,supplier FROM payables WHERE contract_no=? ORDER BY id', (cn,))
                 if not suppliers: continue
-                rows_html = ''; rc = 0
+                rows_html = ''; rc = 0; tot_qty=0; tot_nw=0; tot_gw=0; tot_vol=0
                 for p in suppliers:
                     trk = query('SELECT * FROM project_tracking WHERE contract_no=? AND supplier=?', (cn, p['supplier']), one=True)
                     gr = int(trk['goods_ready']) if trk and trk['goods_ready'] else 0
@@ -770,6 +770,7 @@ def send_project_report():
                     nw = trk['net_weight'] if trk and trk['net_weight'] is not None else None
                     gw = trk['gross_weight'] if trk and trk['gross_weight'] is not None else None
                     vol = trk['volume'] if trk and trk['volume'] is not None else None
+                    tot_qty+=qty or 0; tot_nw+=nw or 0; tot_gw+=gw or 0; tot_vol+=vol or 0
                     def fn(v): return f'{v:,.0f}' if v is not None else '—'
                     def fv(v): return f'{v:,.2f}' if v is not None else '—'
                     nc = 'font-family:monospace;text-align:right'
@@ -785,11 +786,6 @@ def send_project_report():
                         f'<td style="padding:6px 10px;border-bottom:1px solid #f0f0f0;font-size:11px;{nc}">{fv(vol)}</td>'
                         f'<td style="padding:6px 10px;border-bottom:1px solid #f0f0f0;font-size:11px;color:#666">{rem}</td></tr>'
                     )
-                # 合计行
-                tot_qty = sum((query('SELECT qty FROM project_tracking WHERE contract_no=? AND supplier=?',(cn,p['supplier']),one=True) or {}).get('qty') or 0 for p in suppliers)
-                tot_nw = sum((query('SELECT net_weight FROM project_tracking WHERE contract_no=? AND supplier=?',(cn,p['supplier']),one=True) or {}).get('net_weight') or 0 for p in suppliers)
-                tot_gw = sum((query('SELECT gross_weight FROM project_tracking WHERE contract_no=? AND supplier=?',(cn,p['supplier']),one=True) or {}).get('gross_weight') or 0 for p in suppliers)
-                tot_vol = sum((query('SELECT volume FROM project_tracking WHERE contract_no=? AND supplier=?',(cn,p['supplier']),one=True) or {}).get('volume') or 0 for p in suppliers)
                 foot_row = (f'<tr style="background:#f5f5f3;font-weight:600">'
                     f'<td colspan="5" style="padding:6px 10px;font-size:11px;color:#666">合计 {len(suppliers)} 家</td>'
                     f'<td style="padding:6px 10px;font-size:11px;font-family:monospace;text-align:right">{tot_qty:,.0f}</td>'
