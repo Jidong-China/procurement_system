@@ -733,6 +733,82 @@ def send_daily_report():
             except: pass
             return False,str(e)
 
+def send_project_report():
+    with app.app_context():
+        try:
+            sched = query('SELECT * FROM report_schedule WHERE id=1', one=True)
+            proj_em = sched['proj_emails'] if sched and sched['proj_emails'] else ''
+            if not proj_em or not sched['proj_report_enabled']:
+                return False, '项目日报未启用或无收件人'
+            emails = [e.strip() for e in proj_em.split(',') if e.strip()]
+            contracts = query('SELECT DISTINCT contract_no, our_company FROM payables WHERE contract_no != "" ORDER BY contract_no')
+            smtp_host = os.environ.get('SMTP_HOST','smtp.gmail.com')
+            smtp_port = int(os.environ.get('SMTP_PORT','587'))
+            smtp_user = os.environ.get('SMTP_USER','')
+            smtp_pass = os.environ.get('SMTP_PASS','')
+            if not smtp_user or not smtp_pass: return False, 'SMTP未配置'
+            today = datetime.now().strftime('%Y年%m月%d日')
+            total_s = 0; total_r = 0
+            proj_html = ''
+            for c in contracts:
+                cn = c['contract_no']
+                suppliers = query('SELECT id,supplier FROM payables WHERE contract_no=? ORDER BY id', (cn,))
+                if not suppliers: continue
+                rows_html = ''; rc = 0
+                for p in suppliers:
+                    trk = query('SELECT * FROM project_tracking WHERE contract_no=? AND supplier=?', (cn, p['supplier']), one=True)
+                    gr = int(trk['goods_ready']) if trk and trk['goods_ready'] else 0
+                    if gr: rc += 1; total_r += 1
+                    total_s += 1
+                    inv = int(trk['invoice_ok']) if trk and trk['invoice_ok'] else 0
+                    dl = (trk['delivery_date'] if trk else '') or '—'
+                    loc = (trk['location'] if trk else '') or '—'
+                    rem = (trk['remark'] if trk else '') or '—'
+                    grc = '#0d6b55' if gr else '#999'
+                    ic = '#0d6b55' if inv else '#999'
+                    rows_html += (
+                        f'<tr><td style="padding:6px 10px;border-bottom:1px solid #f0f0f0;font-size:12px">{p["supplier"]}</td>'
+                        f'<td style="text-align:center;color:{grc};font-weight:600;padding:6px 10px;border-bottom:1px solid #f0f0f0">{"✓" if gr else "—"}</td>'
+                        f'<td style="padding:6px 10px;border-bottom:1px solid #f0f0f0;font-size:11px;color:#666">{dl}</td>'
+                        f'<td style="padding:6px 10px;border-bottom:1px solid #f0f0f0;font-size:11px;color:#666">{loc}</td>'
+                        f'<td style="text-align:center;color:{ic};padding:6px 10px;border-bottom:1px solid #f0f0f0">{"✓" if inv else "—"}</td>'
+                        f'<td style="padding:6px 10px;border-bottom:1px solid #f0f0f0;font-size:11px;color:#666">{rem}</td></tr>'
+                    )
+                sc = '#0d6b55' if rc == len(suppliers) else '#b36b00'
+                th = '<th style="padding:6px 10px;text-align:left;font-size:11px;color:#999;font-weight:500">'
+                proj_html += (
+                    '<div style="background:#fff;border-radius:8px;margin-bottom:12px;overflow:hidden">'
+                    f'<div style="background:#f5f5f3;padding:10px 14px;display:flex;justify-content:space-between">'
+                    f'<span style="font-weight:600;font-size:13px">{cn}</span>'
+                    f'<span style="font-size:11px;color:{sc};font-weight:600">{rc}/{len(suppliers)} 货已好</span></div>'
+                    '<table style="width:100%;border-collapse:collapse">'
+                    f'<thead><tr style="background:#fafafa">{th}供应商</th>{th}货是否已好</th>{th}交期</th>{th}所在地</th>{th}开票</th>{th}备注</th></tr></thead>'
+                    f'<tbody>{rows_html}</tbody></table></div>'
+                )
+            html = (
+                '<div style="font-family:Arial,sans-serif;max-width:750px;margin:0 auto;background:#f8f7f4;padding:20px">'
+                '<div style="background:#1a1714;border-radius:10px;padding:18px 22px;margin-bottom:16px">'
+                '<h1 style="color:#fff;margin:0;font-size:17px">项目跟进每日状态报告</h1>'
+                f'<p style="color:rgba(255,255,255,.4);margin:3px 0 0;font-size:11px">{today} 自动发送</p></div>'
+                f'<div style="background:#fff;border-radius:8px;padding:14px;margin-bottom:16px;font-size:13px">'
+                f'合同数：{len(contracts)}项 &nbsp;|&nbsp; 供应商：{total_s}家 &nbsp;|&nbsp; '
+                f'<span style="color:#0d6b55">货已好：{total_r}家</span> &nbsp;|&nbsp; '
+                f'<span style="color:#b36b00">待备货：{total_s-total_r}家</span></div>'
+                + proj_html +
+                '<p style="color:#aaa;font-size:10px;text-align:center;margin-top:14px">此邮件由系统自动发送，请勿回复</p></div>'
+            )
+            msg = MIMEMultipart('alternative')
+            msg['Subject'] = f'项目跟进状态报告 — {today}'
+            msg['From'] = smtp_user; msg['To'] = ', '.join(emails)
+            msg.attach(MIMEText(html, 'html', 'utf-8'))
+            with smtplib.SMTP(smtp_host, smtp_port) as srv:
+                srv.ehlo(); srv.starttls(); srv.login(smtp_user, smtp_pass)
+                srv.sendmail(smtp_user, emails, msg.as_string())
+            return True, f'项目日报已发送至 {", ".join(emails)}'
+        except Exception as e:
+            return False, str(e)
+
+
 # ── Scheduler ─────────────────────────────────────────────────────────────────
 
 if HAS_SCHEDULER:
@@ -755,6 +831,16 @@ def restart_scheduler():
                                       id=f'dr{i}',replace_existing=True)
                     print(f"[Scheduler] 应付款日报{i}: 每天 {t}")
                 except Exception as e: print(f"[Scheduler] 定时{i}失败: {e}")
+        # 项目跟进日报
+        proj_em = s['proj_emails'] if s and s['proj_emails'] else ''
+        if s and s['proj_report_enabled'] and proj_em:
+            for i, t in enumerate([s['send_time'] or '08:00', s['send_time2'] or '16:30'], 1):
+                try:
+                    if not t: continue
+                    h,m=t.strip().split(':')
+                    scheduler.add_job(send_project_report,'cron',hour=int(h),minute=int(m),id=f'pr{i}',replace_existing=True)
+                    print(f"[Scheduler] 项目日报{i}: 每天 {t}")
+                except Exception as e: print(f"[Scheduler] 项目定时{i}失败: {e}")
         # 项目跟进日报
         proj_em = s['proj_emails'] if s and s['proj_emails'] else ''
         if s and s['proj_report_enabled'] and proj_em:
