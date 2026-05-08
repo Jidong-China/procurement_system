@@ -707,13 +707,32 @@ def send_daily_report():
                 return ''.join(f'<tr><td style="padding:7px 12px;border-bottom:1px solid #f0f0f0">{r["supplier"]}</td><td style="padding:7px 12px;border-bottom:1px solid #f0f0f0;color:#666">{r["sheet"]}</td><td style="padding:7px 12px;border-bottom:1px solid #f0f0f0;font-family:monospace">{fmt(r["tail_payment"] or r["total_amount"])}</td><td style="padding:7px 12px;border-bottom:1px solid #f0f0f0;color:{color};font-weight:600">{days_until(r["due_date"])}天后</td><td style="padding:7px 12px;border-bottom:1px solid #f0f0f0;color:#999">{r["due_date"] or "—"}</td></tr>' for r in items)
             ut=sum((r['tail_payment'] or r['total_amount'] or 0) for r in urgent)
             wt=sum((r['tail_payment'] or r['total_amount'] or 0) for r in warning)
+            # 付款正常 7天以上
+            normal_rows=query("SELECT * FROM payables WHERE is_paid=0 AND due_date IS NOT NULL")
+            normal=[dict(r) for r in normal_rows if days_until(r['due_date']) is not None and days_until(r['due_date'])>7]
+            nt=sum((r['tail_payment'] or r['total_amount'] or 0) for r in normal)
+            # 全部台账
+            all_rows=query("SELECT * FROM payables WHERE is_paid=0")
+            all_total=sum((r['total_amount'] or 0) for r in all_rows)
+            total_count=query("SELECT COUNT(*) as c FROM payables",one=True)['c']
+            # 我方公司细分
+            def co_breakdown(items, key_col):
+                cos={}
+                for r in items:
+                    co=r.get('our_company') or r['sheet'] or '其他'
+                    cos[co]=cos.get(co,0)+(r['tail_payment'] or r['total_amount'] or 0)
+                short=lambda s:s.replace('有限公司','').replace('进出口','').replace('集团','').replace('股份','').strip()[:6]
+                lines=sorted(cos.items(),key=lambda x:-x[1])
+                return ''.join(f'<div style="display:flex;justify-content:space-between;font-size:10px;color:#888;margin-top:3px;padding-top:3px;border-top:1px dashed #eee"><span>{short(c)}</span><span style="font-family:monospace">¥{v:,.2f}</span></div>' for c,v in lines if v>0)
             today=datetime.now().strftime('%Y年%m月%d日')
             th='<th style="padding:7px 12px;text-align:left;color:#999;font-weight:500">'
             html=f'''<div style="font-family:'PingFang SC',Arial,sans-serif;max-width:750px;margin:0 auto;background:#f8f7f4;padding:20px">
 <div style="background:#1a1714;border-radius:10px;padding:18px 22px;margin-bottom:16px"><h1 style="color:#fff;margin:0;font-size:17px">{sched["report_title"]}</h1><p style="color:rgba(255,255,255,.4);margin:3px 0 0;font-size:11px">{today} 自动发送</p></div>
-<div style="display:flex;gap:12px;margin-bottom:16px">
-<div style="flex:1;background:#fff;border-radius:8px;padding:14px;border-left:3px solid #c54b1e"><div style="font-size:10px;color:#999;text-transform:uppercase">紧急预警 3天内</div><div style="font-size:26px;font-weight:700;color:#c54b1e;margin:3px 0">{len(urgent)}</div><div style="font-size:11px;color:#666">应付合计 ¥{ut:,.2f}</div></div>
-<div style="flex:1;background:#fff;border-radius:8px;padding:14px;border-left:3px solid #b36b00"><div style="font-size:10px;color:#999;text-transform:uppercase">预警提醒 7天内</div><div style="font-size:26px;font-weight:700;color:#b36b00;margin:3px 0">{len(warning)}</div><div style="font-size:11px;color:#666">应付合计 ¥{wt:,.2f}</div></div>
+<div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap">
+<div style="flex:1;min-width:140px;background:#fff;border-radius:8px;padding:14px;border-left:3px solid #c54b1e"><div style="font-size:10px;color:#999">紧急预警 3天内</div><div style="font-size:26px;font-weight:700;color:#c54b1e;margin:3px 0">{len(urgent)}</div><div style="font-size:11px;color:#666;margin-bottom:4px">应付 ¥{ut:,.2f}</div>{co_breakdown(urgent,"")}</div>
+<div style="flex:1;min-width:140px;background:#fff;border-radius:8px;padding:14px;border-left:3px solid #b36b00"><div style="font-size:10px;color:#999">近期预警 7天内</div><div style="font-size:26px;font-weight:700;color:#b36b00;margin:3px 0">{len(warning)}</div><div style="font-size:11px;color:#666;margin-bottom:4px">应付 ¥{wt:,.2f}</div>{co_breakdown(warning,"")}</div>
+<div style="flex:1;min-width:140px;background:#fff;border-radius:8px;padding:14px;border-left:3px solid #0d6b55"><div style="font-size:10px;color:#999">付款正常 7天以上</div><div style="font-size:26px;font-weight:700;color:#0d6b55;margin:3px 0">{len(normal)}</div><div style="font-size:11px;color:#666;margin-bottom:4px">应付 ¥{nt:,.2f}</div>{co_breakdown(normal,"")}</div>
+<div style="flex:1;min-width:140px;background:#fff;border-radius:8px;padding:14px;border-left:3px solid #555"><div style="font-size:10px;color:#999">全部合同 · 台账总数</div><div style="font-size:26px;font-weight:700;color:#333;margin:3px 0">{total_count}</div><div style="font-size:11px;color:#666">总额 ¥{all_total:,.2f}</div></div>
 </div>
 <div style="background:#fff;border-radius:8px;margin-bottom:12px;overflow:hidden"><div style="background:#fdf0eb;padding:10px 14px;font-weight:600;color:#c54b1e;font-size:13px">🔴 紧急预警（{len(urgent)}条）</div><table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr style="background:#fafafa">{th}供应商</th>{th}负责人</th>{th}应付金额</th>{th}剩余天数</th>{th}到期日</th></tr></thead><tbody>{trs(urgent,"#c54b1e")}</tbody></table></div>
 <div style="background:#fff;border-radius:8px;overflow:hidden"><div style="background:#fef7ea;padding:10px 14px;font-weight:600;color:#b36b00;font-size:13px">🟠 预警提醒（{len(warning)}条）</div><table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr style="background:#fafafa">{th}供应商</th>{th}负责人</th>{th}应付金额</th>{th}剩余天数</th>{th}到期日</th></tr></thead><tbody>{trs(warning,"#b36b00")}</tbody></table></div>
