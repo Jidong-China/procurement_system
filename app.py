@@ -766,24 +766,48 @@ def send_project_report():
                     rem = (trk['remark'] if trk else '') or '—'
                     grc = '#0d6b55' if gr else '#999'
                     ic = '#0d6b55' if inv else '#999'
+                    qty = trk['qty'] if trk and trk['qty'] is not None else None
+                    nw = trk['net_weight'] if trk and trk['net_weight'] is not None else None
+                    gw = trk['gross_weight'] if trk and trk['gross_weight'] is not None else None
+                    vol = trk['volume'] if trk and trk['volume'] is not None else None
+                    def fn(v): return f'{v:,.0f}' if v is not None else '—'
+                    def fv(v): return f'{v:,.2f}' if v is not None else '—'
+                    nc = 'font-family:monospace;text-align:right'
                     rows_html += (
                         f'<tr><td style="padding:6px 10px;border-bottom:1px solid #f0f0f0;font-size:12px">{p["supplier"]}</td>'
                         f'<td style="text-align:center;color:{grc};font-weight:600;padding:6px 10px;border-bottom:1px solid #f0f0f0">{"✓" if gr else "—"}</td>'
                         f'<td style="padding:6px 10px;border-bottom:1px solid #f0f0f0;font-size:11px;color:#666">{dl}</td>'
                         f'<td style="padding:6px 10px;border-bottom:1px solid #f0f0f0;font-size:11px;color:#666">{loc}</td>'
                         f'<td style="text-align:center;color:{ic};padding:6px 10px;border-bottom:1px solid #f0f0f0">{"✓" if inv else "—"}</td>'
+                        f'<td style="padding:6px 10px;border-bottom:1px solid #f0f0f0;font-size:11px;{nc}">{fn(qty)}</td>'
+                        f'<td style="padding:6px 10px;border-bottom:1px solid #f0f0f0;font-size:11px;{nc}">{fn(nw)}</td>'
+                        f'<td style="padding:6px 10px;border-bottom:1px solid #f0f0f0;font-size:11px;{nc}">{fn(gw)}</td>'
+                        f'<td style="padding:6px 10px;border-bottom:1px solid #f0f0f0;font-size:11px;{nc}">{fv(vol)}</td>'
                         f'<td style="padding:6px 10px;border-bottom:1px solid #f0f0f0;font-size:11px;color:#666">{rem}</td></tr>'
                     )
+                # 合计行
+                tot_qty = sum((query('SELECT qty FROM project_tracking WHERE contract_no=? AND supplier=?',(cn,p['supplier']),one=True) or {}).get('qty') or 0 for p in suppliers)
+                tot_nw = sum((query('SELECT net_weight FROM project_tracking WHERE contract_no=? AND supplier=?',(cn,p['supplier']),one=True) or {}).get('net_weight') or 0 for p in suppliers)
+                tot_gw = sum((query('SELECT gross_weight FROM project_tracking WHERE contract_no=? AND supplier=?',(cn,p['supplier']),one=True) or {}).get('gross_weight') or 0 for p in suppliers)
+                tot_vol = sum((query('SELECT volume FROM project_tracking WHERE contract_no=? AND supplier=?',(cn,p['supplier']),one=True) or {}).get('volume') or 0 for p in suppliers)
+                foot_row = (f'<tr style="background:#f5f5f3;font-weight:600">'
+                    f'<td colspan="5" style="padding:6px 10px;font-size:11px;color:#666">合计 {len(suppliers)} 家</td>'
+                    f'<td style="padding:6px 10px;font-size:11px;font-family:monospace;text-align:right">{tot_qty:,.0f}</td>'
+                    f'<td style="padding:6px 10px;font-size:11px;font-family:monospace;text-align:right">{tot_nw:,.0f}</td>'
+                    f'<td style="padding:6px 10px;font-size:11px;font-family:monospace;text-align:right">{tot_gw:,.0f}</td>'
+                    f'<td style="padding:6px 10px;font-size:11px;font-family:monospace;text-align:right">{tot_vol:,.2f}</td>'
+                    f'<td></td></tr>')
                 sc = '#0d6b55' if rc == len(suppliers) else '#b36b00'
                 th = '<th style="padding:6px 10px;text-align:left;font-size:11px;color:#999;font-weight:500">'
+                thr = '<th style="padding:6px 10px;text-align:right;font-size:11px;color:#999;font-weight:500">'
                 proj_html += (
                     '<div style="background:#fff;border-radius:8px;margin-bottom:12px;overflow:hidden">'
                     f'<div style="background:#f5f5f3;padding:10px 14px;display:flex;justify-content:space-between">'
                     f'<span style="font-weight:600;font-size:13px">{cn}</span>'
                     f'<span style="font-size:11px;color:{sc};font-weight:600">{rc}/{len(suppliers)} 货已好</span></div>'
                     '<table style="width:100%;border-collapse:collapse">'
-                    f'<thead><tr style="background:#fafafa">{th}供应商</th>{th}货是否已好</th>{th}交期</th>{th}所在地</th>{th}开票</th>{th}备注</th></tr></thead>'
-                    f'<tbody>{rows_html}</tbody></table></div>'
+                    f'<thead><tr style="background:#fafafa">{th}供应商</th>{th}货是否已好</th>{th}交期</th>{th}所在地</th>{th}开票</th>{thr}件数</th>{thr}净重KG</th>{thr}毛重KG</th>{thr}体积M³</th>{th}备注</th></tr></thead>'
+                    f'<tbody>{rows_html}</tbody><tfoot>{foot_row}</tfoot></table></div>'
                 )
             html = (
                 '<div style="font-family:Arial,sans-serif;max-width:750px;margin:0 auto;background:#f8f7f4;padding:20px">'
