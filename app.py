@@ -101,6 +101,7 @@ def init_db():
             net_weight REAL,
             gross_weight REAL,
             volume REAL,
+            archived INTEGER DEFAULT 0,
             sort_order INTEGER DEFAULT 0,
             created_at TEXT DEFAULT (datetime('now')),
             updated_at TEXT DEFAULT (datetime('now'))
@@ -151,6 +152,7 @@ def init_db():
         ('goods_ready_note','TEXT DEFAULT ""'),('delivery_date','TEXT DEFAULT ""'),
         ('inspection_note','TEXT DEFAULT ""'),('packing_note','TEXT DEFAULT ""'),
         ('label_note','TEXT DEFAULT ""'),('invoice_note','TEXT DEFAULT ""'),
+        ('archived','INTEGER DEFAULT 0'),
     ]
     for col, default in trk_cols:
         try:
@@ -537,7 +539,7 @@ def api_projects():
     result = []
     for r in rows:
         cn = r['contract_no']
-        trk = query("SELECT COUNT(*) as total, SUM(CASE WHEN goods_ready='√' OR goods_ready='✓' THEN 1 ELSE 0 END) as ready FROM project_tracking WHERE contract_no=?", (cn,), one=True)
+        trk = query("SELECT COUNT(*) as total, SUM(CASE WHEN goods_ready='√' OR goods_ready='✓' THEN 1 ELSE 0 END) as ready, MAX(archived) as archived FROM project_tracking WHERE contract_no=?", (cn,), one=True)
         result.append({
             'contract_no': cn,
             'our_company': r['our_company'] or '',
@@ -546,6 +548,7 @@ def api_projects():
             'sign_date': r['sign_date'] or '',
             'tracking_total': trk['total'] if trk else 0,
             'tracking_ready': trk['ready'] if trk else 0,
+            'archived': 1 if (trk and trk['archived']) else 0,
         })
     return jsonify(result)
 
@@ -630,6 +633,18 @@ def api_project_tracking_put():
                        d.get('remark',''),
                        d.get('qty'), d.get('net_weight'), d.get('gross_weight'), d.get('volume')))
         return jsonify({'ok': True, 'id': cur.lastrowid})
+
+@app.route('/api/projects/<path:cn>/archive', methods=['PUT'])
+@admin_required
+def api_project_archive(cn):
+    val = 1 if request.json.get('archived') else 0
+    # 如果还没有跟进记录，先创建一条占位记录
+    existing = query("SELECT contract_no FROM project_tracking WHERE contract_no=? LIMIT 1", (cn,), one=True)
+    if not existing:
+        execute("INSERT INTO project_tracking(contract_no, supplier, archived) VALUES(?,?,?)", (cn, '__archived__', val))
+    else:
+        execute("UPDATE project_tracking SET archived=?, updated_at=datetime('now') WHERE contract_no=?", (val, cn))
+    return jsonify({'ok': True})
 
 @app.route('/api/projects/clear_all', methods=['POST'])
 @admin_required
@@ -771,6 +786,9 @@ def send_project_report():
             proj_html = ''
             for c in contracts:
                 cn = c['contract_no']
+                # 跳过已锁档合同
+                arch = query('SELECT MAX(archived) as a FROM project_tracking WHERE contract_no=?', (cn,), one=True)
+                if arch and arch['a']: continue
                 suppliers = query('SELECT id,supplier FROM payables WHERE contract_no=? ORDER BY id', (cn,))
                 if not suppliers: continue
                 rows_html = ''; rc = 0; tot_qty=0; tot_nw=0; tot_gw=0; tot_vol=0
@@ -855,44 +873,27 @@ if HAS_SCHEDULER:
 
 def restart_scheduler():
     if not HAS_SCHEDULER: return
-    for jid in ['dr1','dr2','pr1','pr2']:
+    for jid in ['dr1','pr1']:
         if scheduler.get_job(jid): scheduler.remove_job(jid)
     with app.app_context():
-        s=query("SELECT * FROM report_schedule WHERE id=1",one=True)
+        s = query("SELECT * FROM report_schedule WHERE id=1", one=True)
+        # 只用下午时间（send_time2），早间不再推送
+        t = s['send_time2'] if s and s['send_time2'] else '16:30'
         if s and s['enabled'] and s['emails']:
-            t1 = s['send_time'] if s['send_time'] else '08:00'
-            t2 = s['send_time2'] if s['send_time2'] else '16:30'
-            for i, t in enumerate([t1, t2], 1):
-                try:
-                    if not t: continue
-                    h,m=t.strip().split(':')
-                    scheduler.add_job(send_daily_report,'cron',hour=int(h),minute=int(m),
-                                      id=f'dr{i}',replace_existing=True)
-                    print(f"[Scheduler] 应付款日报{i}: 每天 {t}")
-                except Exception as e: print(f"[Scheduler] 定时{i}失败: {e}")
-        # 项目跟进日报
+            try:
+                h, m = t.strip().split(':')
+                scheduler.add_job(send_daily_report, 'cron', hour=int(h), minute=int(m),
+                                  id='dr1', replace_existing=True)
+                print(f"[Scheduler] 应付款日报: 每天 {t}")
+            except Exception as e: print(f"[Scheduler] 应付款日报失败: {e}")
         proj_em = s['proj_emails'] if s and s['proj_emails'] else ''
         if s and s['proj_report_enabled'] and proj_em:
-            for i, t in enumerate([s['send_time'] or '08:00', s['send_time2'] or '16:30'], 1):
-                try:
-                    if not t: continue
-                    h,m=t.strip().split(':')
-                    scheduler.add_job(send_project_report,'cron',hour=int(h),minute=int(m),id=f'pr{i}',replace_existing=True)
-                    print(f"[Scheduler] 项目日报{i}: 每天 {t}")
-                except Exception as e: print(f"[Scheduler] 项目定时{i}失败: {e}")
-        # 项目跟进日报
-        proj_em = s['proj_emails'] if s and s['proj_emails'] else ''
-        if s and s['proj_report_enabled'] and proj_em:
-            t1 = s['send_time'] if s['send_time'] else '08:00'
-            t2 = s['send_time2'] if s['send_time2'] else '16:30'
-            for i, t in enumerate([t1, t2], 1):
-                try:
-                    if not t: continue
-                    h,m=t.strip().split(':')
-                    scheduler.add_job(send_project_report,'cron',hour=int(h),minute=int(m),
-                                      id=f'pr{i}',replace_existing=True)
-                    print(f"[Scheduler] 项目日报{i}: 每天 {t}")
-                except Exception as e: print(f"[Scheduler] 项目定时{i}失败: {e}")
+            try:
+                h, m = t.strip().split(':')
+                scheduler.add_job(send_project_report, 'cron', hour=int(h), minute=int(m),
+                                  id='pr1', replace_existing=True)
+                print(f"[Scheduler] 项目日报: 每天 {t}")
+            except Exception as e: print(f"[Scheduler] 项目日报失败: {e}")
 
 
 @app.route('/download_template')
