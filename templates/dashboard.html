@@ -241,6 +241,10 @@ tr:last-child td{border-bottom:none}
         <button onclick="showNewProj()" style="background:var(--rust);color:#fff;border:none;border-radius:5px;padding:6px 11px;font-size:14px;cursor:pointer;font-weight:700">+</button>
         {% endif %}
       </div>
+      <div style="padding:7px 12px;border-bottom:1px solid var(--sand3);display:flex;align-items:center;gap:6px">
+        <input type="checkbox" id="showArchived" onchange="renderProjList(document.getElementById('projSrch').value.toLowerCase())" style="cursor:pointer">
+        <label for="showArchived" style="font-size:11px;color:var(--ink4);cursor:pointer">显示已锁档合同</label>
+      </div>
       <div id="projList" style="flex:1;overflow-y:auto"></div>
     </div>
     <div class="proj-main">
@@ -966,19 +970,38 @@ async function loadProjs(){
 }
 function filterProj(){renderProjList(document.getElementById('projSrch').value.toLowerCase());}
 function renderProjList(q=''){
-  const list=projs.filter(p=>!q||p.contract_no.toLowerCase().includes(q));
+  const showArch = document.getElementById('showArchived')?.checked;
+  let list = projs.filter(p=>!q||p.contract_no.toLowerCase().includes(q));
+  // 未锁档在前，锁档在后
+  const active = list.filter(p=>!p.archived);
+  const archived = list.filter(p=>p.archived);
+  const visible = showArch ? [...active, ...archived] : active;
   const el=document.getElementById('projList');
-  if(!list.length){el.innerHTML='<div style="padding:20px;text-align:center;color:var(--ink4);font-size:12px">应付款台账暂无合同数据</div>';return;}
-  el.innerHTML=list.map(p=>`
-    <div class="proj-item${p.contract_no===curProj?' active':''}" onclick="selectProj('${p.contract_no.replace(/'/g,"\'")}')">
-      <div style="flex:1;min-width:0">
-        <div style="font-size:12px;font-weight:600;color:var(--ink)">${p.contract_no}</div>
+  if(!visible.length && !archived.length){
+    el.innerHTML='<div style="padding:20px;text-align:center;color:var(--ink4);font-size:12px">应付款台账暂无合同数据</div>';return;
+  }
+  if(!visible.length){
+    el.innerHTML='<div style="padding:12px;text-align:center;color:var(--ink4);font-size:11px">全部已锁档，勾选上方开关显示</div>';return;
+  }
+  el.innerHTML=visible.map(p=>{
+    const isArch = p.archived;
+    const itemStyle = isArch
+      ? 'opacity:0.45;filter:grayscale(60%)'
+      : '';
+    const cnColor = isArch ? 'color:var(--ink4)' : 'color:var(--ink)';
+    const badge = p.tracking_total>0
+      ? p.tracking_ready+'/'+p.supplier_count+'货好'
+      : p.supplier_count+'供应商';
+    const badgeCls = isArch ? 'b-gray'
+      : (p.tracking_ready>0&&p.tracking_ready>=p.supplier_count?'b-ok':p.tracking_ready>0?'b-warn':'b-gray');
+    return `<div class="proj-item${p.contract_no===curProj?' active':''}" onclick="selectProj('${p.contract_no.replace(/'/g,"\'")}')">
+      <div style="flex:1;min-width:0;${itemStyle}">
+        <div style="font-size:12px;font-weight:600;${cnColor}">${isArch?'🔒 ':' '}${p.contract_no}</div>
         <div style="font-size:10px;color:var(--ink4);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.our_company||p.responsible||''}</div>
       </div>
-      <span class="${p.tracking_ready>0&&p.tracking_ready>=p.supplier_count?'b-ok':p.tracking_ready>0?'b-warn':'b-gray'}" style="flex-shrink:0;margin-left:6px;font-size:9px">
-        ${p.tracking_total>0?p.tracking_ready+'/'+p.supplier_count+'货好':p.supplier_count+'供应商'}
-      </span>
-    </div>`).join('');
+      <span class="${badgeCls}" style="flex-shrink:0;margin-left:6px;font-size:9px">${badge}</span>
+    </div>`;
+  }).join('');
 }
 
 async function selectProj(cn){
@@ -1029,14 +1052,27 @@ function textCell(cn,supplier,field,val){
 function renderTrkTable(cn,rows){
   const proj=projs.find(p=>p.contract_no===cn)||{};
   const readyCount=rows.filter(r=>r.goods_ready).length;
+  const isArch = proj.archived;
   document.getElementById('projHdr').innerHTML=`
-    <div><div style="font-weight:700;font-size:14px">${cn}</div>
+    <div><div style="font-weight:700;font-size:14px">${isArch?'🔒 ':''}${cn}</div>
     <div style="font-size:11px;color:var(--ink4);margin-top:2px">${proj.our_company||''} ${proj.responsible?'· '+proj.responsible:''}</div></div>
     <div style="margin-left:auto;display:flex;align-items:center;gap:10px">
       <span class="${readyCount===rows.length&&rows.length>0?'b-ok':'b-warn'}">${readyCount}/${rows.length} 货已好</span>
+      ${IS_ADMIN?`<button onclick="toggleArchive('${cn.replace(/'/g,"\'")}')"
+        style="font-size:11px;padding:4px 12px;border-radius:5px;cursor:pointer;
+        ${isArch
+          ? 'background:#fff5e6;border:1.5px solid #b36b00;color:#b36b00;font-weight:600'
+          : 'background:#f5f5f3;border:1.5px solid #999;color:#555'
+        }">
+        ${isArch?'🔓 解除锁档':'🔒 锁档'}
+      </button>`:''}
     </div>`;
   document.getElementById('trkempty').style.display=rows.length?'none':'block';
   document.getElementById('trktable').style.display=rows.length?'':'none';
+  // 锁档时整个表格变灰只读
+  const trk = document.getElementById('trktable');
+  if(trk) trk.style.opacity = isArch ? '0.5' : '1';
+  if(trk) trk.style.pointerEvents = isArch ? 'none' : '';
   const sum=f=>rows.reduce((s,r)=>s+(r[f]||0),0);
   const fmt=(v,d=1)=>v?v.toLocaleString('zh-CN',{maximumFractionDigits:d}):'—';
   document.getElementById('trktbody').innerHTML=rows.map(r=>`
@@ -1066,6 +1102,25 @@ function renderTrkTable(cn,rows){
     </tr>`:'';
   if(IS_ADMIN){const a=document.getElementById('trkactions');if(a)a.style.display='none';}
 }
+async function toggleArchive(cn){
+  const proj = projs.find(p=>p.contract_no===cn);
+  if(!proj) return;
+  const newVal = proj.archived ? 0 : 1;
+  const label = newVal ? '确认锁档这个合同？锁档后日报不再推送，数据变为只读。' : '确认解除锁档？';
+  if(!confirm(label)) return;
+  const res = await fetch(`/api/projects/${encodeURIComponent(cn)}/archive`,{
+    method:'PUT', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({archived: newVal})
+  });
+  if((await res.json()).ok){
+    proj.archived = newVal;
+    await loadProjs();
+    const rows = await (await fetch(`/api/projects/${encodeURIComponent(cn)}`)).json();
+    renderTrkTable(cn, rows);
+    toast(newVal ? '🔒 合同已锁档，日报不再推送' : '🔓 已解除锁档');
+  }
+}
+
 async function saveCell(el){
   const cn=el.dataset.cn,supplier=el.dataset.supplier,field=el.dataset.field;
   el.style.background='';el.style.border='';
