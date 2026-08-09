@@ -480,17 +480,58 @@ def api_mark_subpaid(pid):
 @app.route('/api/payables/<int:pid>/fields', methods=['PUT'])
 @admin_required
 def api_update_fields(pid):
-    d = request.json
-    allowed = ['sign_date','due_date','contract_no','our_company']
+    d = request.json or {}
+    allowed = ['sign_date','due_date','contract_no','our_company','supplier','total_amount','payment_terms','notes']
+    PREFIX_MAP = {'TSD':'田少东','ZFC':'张翡翠','ZHX':'赵虹','ME':'赵虹'}
+
+    row = query("SELECT contract_no, supplier FROM payables WHERE id=?", (pid,), one=True)
+    if not row:
+        return jsonify({'error': '合同不存在'}), 404
+    old_cn, old_supplier = row['contract_no'] or '', row['supplier'] or ''
+    new_cn, new_supplier = old_cn, old_supplier
+
     sets, vals = [], []
     for k in allowed:
-        if k in d:
-            sets.append(f"{k}=?")
-            vals.append(d[k] or None)
+        if k not in d:
+            continue
+        v = d[k]
+        if isinstance(v, str):
+            v = v.strip()
+        if k == 'contract_no':
+            if not v:
+                return jsonify({'error': '合同编号不能为空'}), 400
+            sheet = next((sv for p, sv in sorted(PREFIX_MAP.items(), key=lambda x: -len(x[0])) if v.upper().startswith(p)), None)
+            if not sheet:
+                return jsonify({'error': '合同编号前缀非法，只允许 TSD/ZFC/ZHX/ME 开头'}), 400
+            sets.append("sheet=?"); vals.append(sheet)
+            new_cn = v
+        elif k == 'supplier':
+            if not v:
+                return jsonify({'error': '供应商不能为空'}), 400
+            new_supplier = v
+        elif k == 'total_amount':
+            if v in (None, ''):
+                v = None
+            else:
+                try:
+                    v = float(v)
+                except (TypeError, ValueError):
+                    return jsonify({'error': '合同总额必须是数字'}), 400
+        else:
+            v = v if v else None
+        sets.append(f"{k}=?")
+        vals.append(v)
+
     if not sets:
         return jsonify({'error':'无有效字段'}), 400
     vals.append(pid)
     execute(f"UPDATE payables SET {','.join(sets)},updated_at=datetime('now') WHERE id=?", tuple(vals))
+
+    # 合同编号/供应商变更时，联动迁移已录入的项目跟进记录（以「合同号+供应商」为唯一键）
+    if old_cn and (new_cn != old_cn or new_supplier != old_supplier):
+        execute("UPDATE project_tracking SET contract_no=?,supplier=?,updated_at=datetime('now') WHERE contract_no=? AND supplier=?",
+                (new_cn, new_supplier, old_cn, old_supplier))
+
     return jsonify({'ok': True})
 
 @app.route('/api/payables/<int:pid>/notes', methods=['PUT'])
