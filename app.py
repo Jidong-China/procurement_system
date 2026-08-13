@@ -115,6 +115,9 @@ def init_db():
             enabled INTEGER DEFAULT 1,
             proj_emails TEXT DEFAULT '',
             proj_report_enabled INTEGER DEFAULT 1,
+            yj_keyword TEXT DEFAULT '甬嘉',
+            yj_emails TEXT DEFAULT 'hany@yourjai.com',
+            yj_enabled INTEGER DEFAULT 0,
             updated_at TEXT DEFAULT (datetime('now'))
         );
         CREATE TABLE IF NOT EXISTS report_log (
@@ -166,6 +169,9 @@ def init_db():
         ('send_time2', "TEXT DEFAULT '16:30'"),
         ('proj_emails', "TEXT DEFAULT ''"),
         ('proj_report_enabled', 'INTEGER DEFAULT 1'),
+        ('yj_keyword', "TEXT DEFAULT '甬嘉'"),
+        ('yj_emails', "TEXT DEFAULT 'hany@yourjai.com'"),
+        ('yj_enabled', 'INTEGER DEFAULT 0'),
     ]:
         try:
             db.execute(f'ALTER TABLE report_schedule ADD COLUMN {_col} {_def}')
@@ -704,10 +710,11 @@ def api_sched_get():
 @admin_required
 def api_sched_put():
     d=request.json
-    execute("UPDATE report_schedule SET emails=?,send_time=?,send_time2=?,report_title=?,enabled=?,proj_emails=?,proj_report_enabled=?,updated_at=datetime('now') WHERE id=1",
+    execute("UPDATE report_schedule SET emails=?,send_time=?,send_time2=?,report_title=?,enabled=?,proj_emails=?,proj_report_enabled=?,yj_keyword=?,yj_emails=?,yj_enabled=?,updated_at=datetime('now') WHERE id=1",
             (d.get('emails',''),d.get('send_time','08:00'),d.get('send_time2','16:30'),
              d.get('report_title','采购应付款每日预警日报'),1 if d.get('enabled',True) else 0,
-             d.get('proj_emails',''),1 if d.get('proj_report_enabled',True) else 0))
+             d.get('proj_emails',''),1 if d.get('proj_report_enabled',True) else 0,
+             d.get('yj_keyword','甬嘉'),d.get('yj_emails',''),1 if d.get('yj_enabled',False) else 0))
     restart_scheduler()
     return jsonify({'ok':True})
 
@@ -721,6 +728,12 @@ def api_send_now():
 @admin_required
 def api_send_proj_now():
     ok,msg=send_project_report()
+    return jsonify({'ok':ok,'message':msg,'error':None if ok else msg})
+
+@app.route('/api/report_schedule/send_yj_now', methods=['POST'])
+@admin_required
+def api_send_yj_now():
+    ok,msg=send_yj_daily_report()
     return jsonify({'ok':ok,'message':msg,'error':None if ok else msg})
 
 @app.route('/api/report_log')
@@ -738,14 +751,20 @@ def days_until(s):
         return (d-t).days
     except: return None
 
-def send_daily_report():
+def send_daily_report(supplier_filter=None, emails_override=None, title_override=None):
     with app.app_context():
         try:
             sched=query("SELECT * FROM report_schedule WHERE id=1",one=True)
-            if not sched or not sched['emails'] or not sched['enabled']:
-                return False,'日报未启用或无收件人'
-            emails=[e.strip() for e in sched['emails'].split(',') if e.strip()]
-            rows=query("SELECT * FROM payables WHERE is_paid=0 AND due_date IS NOT NULL")
+            if emails_override:
+                emails=[e.strip() for e in emails_override.split(',') if e.strip()]
+                if not emails: return False,'无收件人'
+            else:
+                if not sched or not sched['emails'] or not sched['enabled']:
+                    return False,'日报未启用或无收件人'
+                emails=[e.strip() for e in sched['emails'].split(',') if e.strip()]
+            sup_clause=" AND supplier LIKE ?" if supplier_filter else ""
+            sup_params=(f'%{supplier_filter}%',) if supplier_filter else ()
+            rows=query(f"SELECT * FROM payables WHERE is_paid=0 AND due_date IS NOT NULL{sup_clause}", sup_params)
             urgent,warning=[],[]
             for r in rows:
                 n=days_until(r['due_date'])
@@ -764,13 +783,13 @@ def send_daily_report():
             ut=sum((r['tail_payment'] or r['total_amount'] or 0) for r in urgent)
             wt=sum((r['tail_payment'] or r['total_amount'] or 0) for r in warning)
             # 付款正常 7天以上
-            normal_rows=query("SELECT * FROM payables WHERE is_paid=0 AND due_date IS NOT NULL")
+            normal_rows=query(f"SELECT * FROM payables WHERE is_paid=0 AND due_date IS NOT NULL{sup_clause}", sup_params)
             normal=[dict(r) for r in normal_rows if days_until(r['due_date']) is not None and days_until(r['due_date'])>7]
             nt=sum((r['tail_payment'] or r['total_amount'] or 0) for r in normal)
             # 全部台账
-            all_rows=query("SELECT * FROM payables WHERE is_paid=0")
+            all_rows=query(f"SELECT * FROM payables WHERE is_paid=0{sup_clause}", sup_params)
             all_total=sum((r['total_amount'] or 0) for r in all_rows)
-            total_count=query("SELECT COUNT(*) as c FROM payables",one=True)['c']
+            total_count=query(f"SELECT COUNT(*) as c FROM payables{' WHERE supplier LIKE ?' if supplier_filter else ''}", sup_params, one=True)['c']
             # 我方公司细分
             def co_breakdown(items, key_col):
                 cos={}
@@ -781,9 +800,10 @@ def send_daily_report():
                 lines=sorted(cos.items(),key=lambda x:-x[1])
                 return ''.join(f'<div style="display:flex;justify-content:space-between;font-size:10px;color:#888;margin-top:3px;padding-top:3px;border-top:1px dashed #eee"><span>{short(c)}</span><span style="font-family:monospace">¥{v:,.2f}</span></div>' for c,v in lines if v>0)
             today=datetime.now().strftime('%Y年%m月%d日')
+            title=title_override or (sched["report_title"] if sched else '采购应付款每日预警日报')
             th='<th style="padding:7px 12px;text-align:left;color:#999;font-weight:500">'
             html=f'''<div style="font-family:'PingFang SC',Arial,sans-serif;max-width:750px;margin:0 auto;background:#f8f7f4;padding:20px">
-<div style="background:#1a1714;border-radius:10px;padding:18px 22px;margin-bottom:16px"><h1 style="color:#fff;margin:0;font-size:17px">{sched["report_title"]}</h1><p style="color:rgba(255,255,255,.4);margin:3px 0 0;font-size:11px">{today} 自动发送</p></div>
+<div style="background:#1a1714;border-radius:10px;padding:18px 22px;margin-bottom:16px"><h1 style="color:#fff;margin:0;font-size:17px">{title}</h1><p style="color:rgba(255,255,255,.4);margin:3px 0 0;font-size:11px">{today} 自动发送</p></div>
 <div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap">
 <div style="flex:1;min-width:140px;background:#fff;border-radius:8px;padding:14px;border-left:3px solid #c54b1e"><div style="font-size:10px;color:#999">紧急预警 3天内</div><div style="font-size:26px;font-weight:700;color:#c54b1e;margin:3px 0">{len(urgent)}</div><div style="font-size:11px;color:#666;margin-bottom:4px">应付 ¥{ut:,.2f}</div>{co_breakdown(urgent,"")}</div>
 <div style="flex:1;min-width:140px;background:#fff;border-radius:8px;padding:14px;border-left:3px solid #b36b00"><div style="font-size:10px;color:#999">近期预警 7天内</div><div style="font-size:26px;font-weight:700;color:#b36b00;margin:3px 0">{len(warning)}</div><div style="font-size:11px;color:#666;margin-bottom:4px">应付 ¥{wt:,.2f}</div>{co_breakdown(warning,"")}</div>
@@ -794,7 +814,7 @@ def send_daily_report():
 <div style="background:#fff;border-radius:8px;overflow:hidden"><div style="background:#fef7ea;padding:10px 14px;font-weight:600;color:#b36b00;font-size:13px">🟠 预警提醒（{len(warning)}条）</div><table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr style="background:#fafafa">{th}供应商</th>{th}负责人</th>{th}我方公司</th>{th}应付金额</th>{th}剩余天数</th>{th}到期日</th></tr></thead><tbody>{trs(warning,"#b36b00")}</tbody></table></div>
 <p style="color:#aaa;font-size:10px;text-align:center;margin-top:14px">此邮件由系统自动发送，请勿回复</p></div>'''
             msg=MIMEMultipart('alternative')
-            msg['Subject']=f"{sched['report_title']} — {today}"
+            msg['Subject']=f"{title} — {today}"
             msg['From']=smtp_user; msg['To']=', '.join(emails)
             msg.attach(MIMEText(html,'html','utf-8'))
             with smtplib.SMTP(smtp_host,smtp_port) as srv:
@@ -808,14 +828,18 @@ def send_daily_report():
             except: pass
             return False,str(e)
 
-def send_project_report():
+def send_project_report(supplier_filter=None, emails_override=None, title_override=None):
     with app.app_context():
         try:
             sched = query('SELECT * FROM report_schedule WHERE id=1', one=True)
-            proj_em = sched['proj_emails'] if sched and sched['proj_emails'] else ''
-            if not proj_em or not sched['proj_report_enabled']:
-                return False, '项目日报未启用或无收件人'
-            emails = [e.strip() for e in proj_em.split(',') if e.strip()]
+            if emails_override:
+                emails = [e.strip() for e in emails_override.split(',') if e.strip()]
+                if not emails: return False, '无收件人'
+            else:
+                proj_em = sched['proj_emails'] if sched and sched['proj_emails'] else ''
+                if not proj_em or not sched['proj_report_enabled']:
+                    return False, '项目日报未启用或无收件人'
+                emails = [e.strip() for e in proj_em.split(',') if e.strip()]
             contracts = query('SELECT DISTINCT contract_no, our_company FROM payables WHERE contract_no != "" ORDER BY contract_no')
             smtp_host = os.environ.get('SMTP_HOST','smtp.gmail.com')
             smtp_port = int(os.environ.get('SMTP_PORT','587'))
@@ -823,15 +847,20 @@ def send_project_report():
             smtp_pass = os.environ.get('SMTP_PASS','')
             if not smtp_user or not smtp_pass: return False, 'SMTP未配置'
             today = datetime.now().strftime('%Y年%m月%d日')
-            total_s = 0; total_r = 0
+            title = title_override or '项目跟进每日状态报告'
+            total_s = 0; total_r = 0; included_contracts = 0
             proj_html = ''
             for c in contracts:
                 cn = c['contract_no']
                 # 跳过已锁档合同
                 arch = query('SELECT MAX(archived) as a FROM project_tracking WHERE contract_no=?', (cn,), one=True)
                 if arch and arch['a']: continue
-                suppliers = query('SELECT id,supplier FROM payables WHERE contract_no=? ORDER BY id', (cn,))
+                if supplier_filter:
+                    suppliers = query('SELECT id,supplier FROM payables WHERE contract_no=? AND supplier LIKE ? ORDER BY id', (cn, f'%{supplier_filter}%'))
+                else:
+                    suppliers = query('SELECT id,supplier FROM payables WHERE contract_no=? ORDER BY id', (cn,))
                 if not suppliers: continue
+                included_contracts += 1
                 rows_html = ''; rc = 0; tot_qty=0; tot_nw=0; tot_gw=0; tot_vol=0
                 for p in suppliers:
                     trk = query('SELECT * FROM project_tracking WHERE contract_no=? AND supplier=?', (cn, p['supplier']), one=True)
@@ -886,17 +915,17 @@ def send_project_report():
             html = (
                 '<div style="font-family:Arial,sans-serif;max-width:750px;margin:0 auto;background:#f8f7f4;padding:20px">'
                 '<div style="background:#1a1714;border-radius:10px;padding:18px 22px;margin-bottom:16px">'
-                '<h1 style="color:#fff;margin:0;font-size:17px">项目跟进每日状态报告</h1>'
+                f'<h1 style="color:#fff;margin:0;font-size:17px">{title}</h1>'
                 f'<p style="color:rgba(255,255,255,.4);margin:3px 0 0;font-size:11px">{today} 自动发送</p></div>'
                 f'<div style="background:#fff;border-radius:8px;padding:14px;margin-bottom:16px;font-size:13px">'
-                f'合同数：{len(contracts)}项 &nbsp;|&nbsp; 供应商：{total_s}家 &nbsp;|&nbsp; '
+                f'合同数：{included_contracts}项 &nbsp;|&nbsp; 供应商：{total_s}家 &nbsp;|&nbsp; '
                 f'<span style="color:#0d6b55">货已好：{total_r}家</span> &nbsp;|&nbsp; '
                 f'<span style="color:#b36b00">待备货：{total_s-total_r}家</span></div>'
                 + proj_html +
                 '<p style="color:#aaa;font-size:10px;text-align:center;margin-top:14px">此邮件由系统自动发送，请勿回复</p></div>'
             )
             msg = MIMEMultipart('alternative')
-            msg['Subject'] = f'项目跟进状态报告 — {today}'
+            msg['Subject'] = f'{title} — {today}'
             msg['From'] = smtp_user; msg['To'] = ', '.join(emails)
             msg.attach(MIMEText(html, 'html', 'utf-8'))
             with smtplib.SMTP(smtp_host, smtp_port) as srv:
@@ -906,6 +935,20 @@ def send_project_report():
         except Exception as e:
             return False, str(e)
 
+def send_yj_daily_report():
+    """按供应商关键词筛选的专属日报（应付款预警 + 项目跟进），独立于主日报收件人。"""
+    with app.app_context():
+        sched = query("SELECT * FROM report_schedule WHERE id=1", one=True)
+        if not sched or not sched['yj_enabled'] or not sched['yj_emails']:
+            return False, '供应商专属日报未启用或无收件人'
+        keyword = (sched['yj_keyword'] or '').strip() or '甬嘉'
+        emails = sched['yj_emails']
+        ok1, msg1 = send_daily_report(supplier_filter=keyword, emails_override=emails,
+                                       title_override=f'{keyword} · 应付款预警日报')
+        ok2, msg2 = send_project_report(supplier_filter=keyword, emails_override=emails,
+                                         title_override=f'{keyword} · 项目跟进状态日报')
+        return (ok1 or ok2), f'应付款: {msg1}；项目跟进: {msg2}'
+
 
 # ── Scheduler ─────────────────────────────────────────────────────────────────
 
@@ -914,7 +957,7 @@ if HAS_SCHEDULER:
 
 def restart_scheduler():
     if not HAS_SCHEDULER: return
-    for jid in ['dr1','pr1']:
+    for jid in ['dr1','pr1','yj1']:
         if scheduler.get_job(jid): scheduler.remove_job(jid)
     with app.app_context():
         s = query("SELECT * FROM report_schedule WHERE id=1", one=True)
@@ -935,6 +978,13 @@ def restart_scheduler():
                                   id='pr1', replace_existing=True)
                 print(f"[Scheduler] 项目日报: 每天 {t}")
             except Exception as e: print(f"[Scheduler] 项目日报失败: {e}")
+        if s and s['yj_enabled'] and s['yj_emails']:
+            try:
+                h, m = t.strip().split(':')
+                scheduler.add_job(send_yj_daily_report, 'cron', hour=int(h), minute=int(m),
+                                  id='yj1', replace_existing=True)
+                print(f"[Scheduler] 供应商专属日报（{s['yj_keyword']}）: 每天 {t}")
+            except Exception as e: print(f"[Scheduler] 供应商专属日报失败: {e}")
 
 
 @app.route('/download_template')
