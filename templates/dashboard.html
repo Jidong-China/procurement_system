@@ -445,6 +445,23 @@ tr:last-child td{border-bottom:none}
   </div>
 </div>
 
+<!-- ── 付款节点编辑弹窗 ── -->
+<div class="ov" id="nodeOv">
+  <div class="modal" style="width:380px">
+    <div class="modal-hd"><span class="modal-title" id="nodeOvTitle">添加付款节点</span><span class="modal-close" onclick="closeOv('nodeOv')">×</span></div>
+    <div class="fg"><label class="flbl">节点名称</label><input id="pn_type" type="text" class="finp" placeholder="如：预付款 / 10%进度款 / 尾款"></div>
+    <div class="fg"><label class="flbl">计划日期（不确定可留空）</label><input id="pn_date" type="date" class="finp"></div>
+    <div class="fg"><label class="flbl">计划金额（不确定可留空）</label><input id="pn_amount" type="number" step="0.01" class="finp" placeholder="金额"></div>
+    <div class="fg"><label class="flbl">备注</label><textarea id="pn_note" class="finp" rows="2" style="width:100%;padding:8px 10px;border:1.5px solid var(--sand3);border-radius:6px;font-family:inherit;font-size:12px;outline:none;box-sizing:border-box;resize:vertical"></textarea></div>
+    <div style="margin-bottom:12px;display:flex;align-items:center;gap:8px">
+      <input type="checkbox" id="pn_paid" onchange="document.getElementById('pn_paid_date_wrap').style.display=this.checked?'block':'none'">
+      <label for="pn_paid" style="font-size:12px;color:var(--ink3);cursor:pointer">已付款</label>
+    </div>
+    <div class="fg" id="pn_paid_date_wrap" style="display:none"><label class="flbl">实付日期</label><input id="pn_paid_date" type="date" class="finp"></div>
+    <div class="mactions"><button class="cbtn" onclick="closeOv('nodeOv')">取消</button><button class="cbtn mbtn-ink" onclick="saveNode()" style="background:var(--ink);color:#fff;border-color:var(--ink)">保存</button></div>
+  </div>
+</div>
+
 <!-- ── 新建项目弹窗 ── -->
 <div class="ov" id="newProjOv">
   <div class="modal" style="width:400px">
@@ -749,6 +766,13 @@ function showDetail(i){
       </div>
       <button onclick="savePayment()" style="margin-top:10px;width:100%;background:var(--ink);color:#fff;border:none;border-radius:5px;padding:7px;font-size:12px;font-family:inherit;cursor:pointer">保存金额 / 账期</button>
     </div>`:''}
+    <div style="margin:10px 0;background:var(--sand);border-radius:8px;padding:12px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <div style="font-size:10px;color:var(--ink4);text-transform:uppercase;letter-spacing:.07em;font-weight:600">收付款节点（可多笔：预付款/进度款/尾款…）</div>
+        ${IS_ADMIN?`<span onclick="addPaymentNode()" style="cursor:pointer;font-size:11px;color:var(--rust);font-weight:600;white-space:nowrap">+ 添加节点</span>`:''}
+      </div>
+      <div id="paymentNodesBox" style="font-size:12px;color:var(--ink2)">加载中…</div>
+    </div>
     <hr class="hr">
     <dl class="dl"><dt>到期日期</dt><dd>${IS_ADMIN?`<span class="editable-field" onclick="editField(${r.id},'due_date',this,'date')" data-raw="${r.due_date||''}" style="cursor:pointer;border-bottom:1px dashed var(--sand3);padding-bottom:1px">${r.due_date||'点击填写'}</span>`:r.due_date||'—'}</dd></dl>
     <dl class="dl"><dt>跟进备注</dt><dd style="white-space:pre-line;color:var(--ink2)">${IS_ADMIN?`<span class="editable-field" onclick="editField(${r.id},'notes',this,'textarea')" data-raw="${escAttr(r.notes)}" style="cursor:pointer;display:block;border-bottom:1px dashed var(--sand3);padding-bottom:1px">${r.notes||'点击填写'}</span>`:r.notes||'—'}</dd></dl>
@@ -756,6 +780,95 @@ function showDetail(i){
   if(IS_ADMIN){const b=document.getElementById('paidBtn');b.textContent=r.is_paid?'撤销已付状态':'✓ 标记为已付款';b.style.cssText=r.is_paid?'background:var(--sand);color:var(--ink2);border-color:var(--sand3)':'background:var(--ink);color:#fff;border-color:var(--ink)';}
   document.getElementById('detailOv').classList.add('show');
   setTimeout(syncActualPayDate, 50);
+  loadPaymentNodes(r.id);
+}
+
+// ── 收付款节点 ──
+let curNodes=[];
+async function loadPaymentNodes(pid){
+  const box=document.getElementById('paymentNodesBox');
+  if(!box) return;
+  box.innerHTML='加载中…';
+  const rows=await(await fetch(`/api/payables/${pid}/nodes`)).json();
+  curNodes=rows;
+  if(!rows.length){ box.innerHTML=`<span style="color:var(--ink4)">暂无节点${IS_ADMIN?'，点右上角"+ 添加节点"':''}</span>`; return; }
+  let unpaidTotal=0;
+  rows.forEach(n=>{ if(!n.paid && n.planned_amount) unpaidTotal+=n.planned_amount; });
+  box.innerHTML = rows.map(n=>`
+    <div style="display:flex;align-items:center;gap:6px;padding:6px 0;border-bottom:1px solid var(--sand3)">
+      <div style="flex:1;min-width:0">
+        <div style="font-weight:600">${n.item_type||'未命名节点'}</div>
+        <div style="font-size:11px;color:var(--ink4)">${n.planned_date||'日期待定'} · ${n.planned_amount!=null?fa(n.planned_amount):'金额待定'}${n.note?(' · '+n.note):''}${n.paid&&n.paid_date?(' · 实付 '+n.paid_date):''}</div>
+      </div>
+      ${IS_ADMIN?`
+        <span onclick="togglePaymentNode(${n.id},${n.paid?0:1})" style="cursor:pointer;font-size:11px;padding:3px 7px;border-radius:5px;border:1px solid var(--sand3);white-space:nowrap;background:${n.paid?'var(--teal)':'#fff'};color:${n.paid?'#fff':'var(--ink2)'}">${n.paid?'已付':'标记已付'}</span>
+        <span onclick="editPaymentNode(${n.id})" style="cursor:pointer;font-size:11px;color:var(--ink4)">改</span>
+        <span onclick="deletePaymentNode(${n.id})" style="cursor:pointer;font-size:11px;color:var(--rust)">删</span>
+      `:`<span style="font-size:11px;color:${n.paid?'var(--teal)':'var(--ink4)'}">${n.paid?'已付':'未付'}</span>`}
+    </div>`).join('') +
+    `<div style="margin-top:6px;padding-top:6px;border-top:1px solid var(--sand3);font-size:11px;color:var(--ink4);display:flex;justify-content:space-between"><span>未付合计</span><span style="font-family:monospace;font-weight:600;color:var(--ink)">${fa(unpaidTotal)}</span></div>`;
+}
+function addPaymentNode(){
+  if(!curDetail) return;
+  document.getElementById('nodeOvTitle').textContent='添加付款节点';
+  document.getElementById('pn_type').value='';
+  document.getElementById('pn_date').value='';
+  document.getElementById('pn_amount').value='';
+  document.getElementById('pn_note').value='';
+  document.getElementById('pn_paid').checked=false;
+  document.getElementById('pn_paid_date').value='';
+  document.getElementById('pn_paid_date_wrap').style.display='none';
+  document.getElementById('nodeOv').dataset.editingId='';
+  document.getElementById('nodeOv').classList.add('show');
+}
+function editPaymentNode(id){
+  const n=curNodes.find(x=>x.id===id);
+  if(!n) return;
+  document.getElementById('nodeOvTitle').textContent='编辑付款节点';
+  document.getElementById('pn_type').value=n.item_type||'';
+  document.getElementById('pn_date').value=n.planned_date||'';
+  document.getElementById('pn_amount').value=n.planned_amount!=null?n.planned_amount:'';
+  document.getElementById('pn_note').value=n.note||'';
+  document.getElementById('pn_paid').checked=!!n.paid;
+  document.getElementById('pn_paid_date').value=n.paid_date||'';
+  document.getElementById('pn_paid_date_wrap').style.display=n.paid?'block':'none';
+  document.getElementById('nodeOv').dataset.editingId=id;
+  document.getElementById('nodeOv').classList.add('show');
+}
+async function saveNode(){
+  if(!curDetail) return;
+  const item_type=document.getElementById('pn_type').value.trim();
+  if(!item_type){ toast('请填写节点名称'); return; }
+  const body={
+    item_type,
+    planned_date: document.getElementById('pn_date').value || null,
+    planned_amount: document.getElementById('pn_amount').value!==''?parseFloat(document.getElementById('pn_amount').value):null,
+    note: document.getElementById('pn_note').value.trim(),
+    paid: document.getElementById('pn_paid').checked,
+    paid_date: document.getElementById('pn_paid').checked?(document.getElementById('pn_paid_date').value||null):null
+  };
+  const editingId=document.getElementById('nodeOv').dataset.editingId;
+  let r;
+  if(editingId){
+    r=await fetch(`/api/payment_nodes/${editingId}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  } else {
+    r=await fetch(`/api/payables/${curDetail.id}/nodes`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  }
+  const d=await r.json();
+  if(!d.ok){ toast(d.error||'保存失败'); return; }
+  closeOv('nodeOv');
+  loadPaymentNodes(curDetail.id);
+  toast('✓ 已保存');
+}
+async function togglePaymentNode(nid,paid){
+  await fetch(`/api/payment_nodes/${nid}`,{method:'PUT',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({paid, paid_date: paid?new Date().toISOString().slice(0,10):null})});
+  loadPaymentNodes(curDetail.id);
+}
+async function deletePaymentNode(nid){
+  if(!confirm('确定删除这个付款节点？')) return;
+  await fetch(`/api/payment_nodes/${nid}`,{method:'DELETE'});
+  loadPaymentNodes(curDetail.id);
 }
 
 async function togglePaid(){

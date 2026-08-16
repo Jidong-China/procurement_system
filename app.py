@@ -120,6 +120,19 @@ def init_db():
             yj_enabled INTEGER DEFAULT 0,
             updated_at TEXT DEFAULT (datetime('now'))
         );
+        CREATE TABLE IF NOT EXISTS payment_nodes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            contract_no TEXT NOT NULL,
+            supplier TEXT NOT NULL DEFAULT '',
+            item_type TEXT DEFAULT '',
+            planned_date TEXT,
+            planned_amount REAL,
+            paid INTEGER DEFAULT 0,
+            paid_date TEXT,
+            note TEXT DEFAULT '',
+            created_at TEXT DEFAULT (datetime('now')),
+            updated_at TEXT DEFAULT (datetime('now'))
+        );
         CREATE TABLE IF NOT EXISTS report_log (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             sent_at TEXT,
@@ -533,11 +546,74 @@ def api_update_fields(pid):
     vals.append(pid)
     execute(f"UPDATE payables SET {','.join(sets)},updated_at=datetime('now') WHERE id=?", tuple(vals))
 
-    # 合同编号/供应商变更时，联动迁移已录入的项目跟进记录（以「合同号+供应商」为唯一键）
+    # 合同编号/供应商变更时，联动迁移已录入的项目跟进记录、付款节点（以「合同号+供应商」为唯一键）
     if old_cn and (new_cn != old_cn or new_supplier != old_supplier):
         execute("UPDATE project_tracking SET contract_no=?,supplier=?,updated_at=datetime('now') WHERE contract_no=? AND supplier=?",
                 (new_cn, new_supplier, old_cn, old_supplier))
+        execute("UPDATE payment_nodes SET contract_no=?,supplier=?,updated_at=datetime('now') WHERE contract_no=? AND supplier=?",
+                (new_cn, new_supplier, old_cn, old_supplier))
 
+    return jsonify({'ok': True})
+
+# ── 收付款节点（一个合同可有多笔预付款/进度款/尾款等，金额日期可留空后补录）──────────
+
+@app.route('/api/payables/<int:pid>/nodes')
+@login_required
+def api_payment_nodes_list(pid):
+    row = query("SELECT contract_no, supplier FROM payables WHERE id=?", (pid,), one=True)
+    if not row: return jsonify([])
+    rows = query("SELECT * FROM payment_nodes WHERE contract_no=? AND supplier=? ORDER BY id",
+                 (row['contract_no'], row['supplier']))
+    return jsonify([dict(r) for r in rows])
+
+@app.route('/api/payables/<int:pid>/nodes', methods=['POST'])
+@admin_required
+def api_payment_nodes_add(pid):
+    row = query("SELECT contract_no, supplier FROM payables WHERE id=?", (pid,), one=True)
+    if not row: return jsonify({'error': '合同不存在'}), 404
+    d = request.json or {}
+    item_type = (d.get('item_type') or '').strip()
+    if not item_type: return jsonify({'error': '节点名称不能为空'}), 400
+    amt = d.get('planned_amount')
+    try:
+        amt = float(amt) if amt not in (None, '') else None
+    except (TypeError, ValueError):
+        return jsonify({'error': '计划金额必须是数字'}), 400
+    cur = execute("""INSERT INTO payment_nodes(contract_no,supplier,item_type,planned_date,planned_amount,paid,paid_date,note)
+               VALUES(?,?,?,?,?,0,?,?)""",
+        (row['contract_no'], row['supplier'], item_type,
+         d.get('planned_date') or None, amt,
+         d.get('paid_date') or None, (d.get('note') or '').strip()))
+    return jsonify({'ok': True, 'id': cur.lastrowid})
+
+@app.route('/api/payment_nodes/<int:nid>', methods=['PUT'])
+@admin_required
+def api_payment_node_update(nid):
+    d = request.json or {}
+    allowed = ['item_type', 'planned_date', 'planned_amount', 'paid', 'paid_date', 'note']
+    sets, vals = [], []
+    for k in allowed:
+        if k not in d: continue
+        v = d[k]
+        if k == 'planned_amount':
+            try:
+                v = float(v) if v not in (None, '') else None
+            except (TypeError, ValueError):
+                return jsonify({'error': '计划金额必须是数字'}), 400
+        elif k == 'paid':
+            v = 1 if v else 0
+        elif isinstance(v, str):
+            v = v.strip() or None
+        sets.append(f"{k}=?"); vals.append(v)
+    if not sets: return jsonify({'error': '无有效字段'}), 400
+    vals.append(nid)
+    execute(f"UPDATE payment_nodes SET {','.join(sets)},updated_at=datetime('now') WHERE id=?", tuple(vals))
+    return jsonify({'ok': True})
+
+@app.route('/api/payment_nodes/<int:nid>', methods=['DELETE'])
+@admin_required
+def api_payment_node_delete(nid):
+    execute("DELETE FROM payment_nodes WHERE id=?", (nid,))
     return jsonify({'ok': True})
 
 @app.route('/api/payables/<int:pid>/notes', methods=['PUT'])
