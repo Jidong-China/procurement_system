@@ -579,11 +579,12 @@ def api_payment_nodes_add(pid):
         amt = float(amt) if amt not in (None, '') else None
     except (TypeError, ValueError):
         return jsonify({'error': '计划金额必须是数字'}), 400
+    paid = 1 if d.get('paid') else 0
     cur = execute("""INSERT INTO payment_nodes(contract_no,supplier,item_type,planned_date,planned_amount,paid,paid_date,note)
-               VALUES(?,?,?,?,?,0,?,?)""",
+               VALUES(?,?,?,?,?,?,?,?)""",
         (row['contract_no'], row['supplier'], item_type,
-         d.get('planned_date') or None, amt,
-         d.get('paid_date') or None, (d.get('note') or '').strip()))
+         d.get('planned_date') or None, amt, paid,
+         d.get('paid_date') or None if paid else None, (d.get('note') or '').strip()))
     return jsonify({'ok': True, 'id': cur.lastrowid})
 
 @app.route('/api/payment_nodes/<int:nid>', methods=['PUT'])
