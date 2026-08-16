@@ -711,6 +711,7 @@ function goPg(p){pg=p;renderP();}
 function showDetail(i){
   const r=filtP[i];if(!r)return;curDetail=r;
   nodeDeleteConfirmId=null;
+  clearTimeout(nodeDeleteConfirmTimer);
   const n=duActual(r);
   document.getElementById('detailBody').innerHTML=`
     <div style="margin-bottom:12px">${badge(r)}${n!==null?` <span style="font-size:11px;color:var(--ink4);margin-left:6px">剩余 ${n} 天</span>`:''}</div>
@@ -787,6 +788,7 @@ function showDetail(i){
 // ── 收付款节点 ──
 let curNodes=[];
 let nodeDeleteConfirmId=null;
+let nodeDeleteConfirmTimer=null;
 async function loadPaymentNodes(pid){
   const box=document.getElementById('paymentNodesBox');
   if(!box) return;
@@ -868,7 +870,17 @@ async function togglePaymentNode(nid,paid){
   loadPaymentNodes(curDetail.id);
 }
 async function deletePaymentNode(nid){
-  if(nodeDeleteConfirmId!==nid){ nodeDeleteConfirmId=nid; loadPaymentNodes(curDetail.id); return; }
+  if(nodeDeleteConfirmId!==nid){
+    nodeDeleteConfirmId=nid;
+    clearTimeout(nodeDeleteConfirmTimer);
+    const pidForTimeout=curDetail.id;
+    nodeDeleteConfirmTimer=setTimeout(()=>{
+      if(nodeDeleteConfirmId===nid){ nodeDeleteConfirmId=null; loadPaymentNodes(pidForTimeout); }
+    },4000);
+    loadPaymentNodes(curDetail.id);
+    return;
+  }
+  clearTimeout(nodeDeleteConfirmTimer);
   nodeDeleteConfirmId=null;
   await fetch(`/api/payment_nodes/${nid}`,{method:'DELETE'});
   loadPaymentNodes(curDetail.id);
