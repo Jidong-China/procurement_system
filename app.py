@@ -845,23 +845,30 @@ def send_daily_report(supplier_filter=None, emails_override=None, title_override
             # 逐合同+供应商查收付款节点：有节点的按节点逐笔展开（未付且有计划日期的才参与预警），
             # 没有节点的合同沿用老的 预付款/尾款 + 到期日 字段（向后兼容）
             def build_items():
-                items=[]
+                items=[]; pending=[]
                 for r in payable_rows:
                     nodes=query("SELECT * FROM payment_nodes WHERE contract_no=? AND supplier=? ORDER BY id",
                                 (r['contract_no'], r['supplier']))
                     if nodes:
                         for nd in nodes:
-                            if nd['paid'] or not nd['planned_date']: continue
+                            if nd['paid']: continue
+                            if not nd['planned_date']:
+                                # 未付但没填计划日期，没法排期，单独列到"待补充信息"提醒区
+                                pending.append({'supplier':r['supplier'],'sheet':r['sheet'],'our_company':r['our_company'],
+                                                'amount':nd['planned_amount'],'label':nd['item_type'] or '节点',
+                                                'contract_no':r['contract_no']})
+                                continue
                             items.append({'supplier':r['supplier'],'sheet':r['sheet'],'our_company':r['our_company'],
                                           'amount':nd['planned_amount'] or 0,'due_date':nd['planned_date'],
                                           'label':nd['item_type'] or '节点'})
                     else:
-                        if r['is_paid'] or not r['due_date']: continue
+                        if r['is_paid']: continue
+                        if not r['due_date']: continue
                         items.append({'supplier':r['supplier'],'sheet':r['sheet'],'our_company':r['our_company'],
                                       'amount':r['tail_payment'] or r['total_amount'] or 0,'due_date':r['due_date'],
                                       'label':''})
-                return items
-            all_items=build_items()
+                return items, pending
+            all_items, pending_items = build_items()
             urgent,warning,normal=[],[],[]
             for it in all_items:
                 n=days_until(it['due_date'])
@@ -878,6 +885,9 @@ def send_daily_report(supplier_filter=None, emails_override=None, title_override
             def trs(items,color):
                 if not items: return '<tr><td colspan="7" style="text-align:center;color:#999;padding:10px">暂无</td></tr>'
                 return ''.join(f'<tr><td style="padding:7px 12px;border-bottom:1px solid #f0f0f0">{r["supplier"]}</td><td style="padding:7px 12px;border-bottom:1px solid #f0f0f0;color:#666">{r["sheet"]}</td><td style="padding:7px 12px;border-bottom:1px solid #f0f0f0;color:#666;font-size:11px">{r["our_company"] or "—"}</td><td style="padding:7px 12px;border-bottom:1px solid #f0f0f0;color:#888;font-size:11px">{r["label"] or "—"}</td><td style="padding:7px 12px;border-bottom:1px solid #f0f0f0;font-family:monospace">{fmt(r["amount"])}</td><td style="padding:7px 12px;border-bottom:1px solid #f0f0f0;color:{color};font-weight:600">{days_until(r["due_date"])}天后</td><td style="padding:7px 12px;border-bottom:1px solid #f0f0f0;color:#999">{r["due_date"] or "—"}</td></tr>' for r in items)
+            def trs_pending(items):
+                if not items: return '<tr><td colspan="6" style="text-align:center;color:#999;padding:10px">暂无</td></tr>'
+                return ''.join(f'<tr><td style="padding:7px 12px;border-bottom:1px solid #f0f0f0">{r["supplier"]}</td><td style="padding:7px 12px;border-bottom:1px solid #f0f0f0;color:#666">{r["sheet"]}</td><td style="padding:7px 12px;border-bottom:1px solid #f0f0f0;color:#666;font-size:11px">{r["our_company"] or "—"}</td><td style="padding:7px 12px;border-bottom:1px solid #f0f0f0;color:#666;font-size:11px">{r["contract_no"] or "—"}</td><td style="padding:7px 12px;border-bottom:1px solid #f0f0f0;color:#888;font-size:11px">{r["label"] or "—"}</td><td style="padding:7px 12px;border-bottom:1px solid #f0f0f0;font-family:monospace;color:#999">{fmt(r["amount"]) if r["amount"] else "金额待填"}</td></tr>' for r in items)
             ut=sum(r['amount'] for r in urgent)
             wt=sum(r['amount'] for r in warning)
             nt=sum(r['amount'] for r in normal)
@@ -897,6 +907,12 @@ def send_daily_report(supplier_filter=None, emails_override=None, title_override
             today=datetime.now().strftime('%Y年%m月%d日')
             title=title_override or (sched["report_title"] if sched else '采购应付款每日预警日报')
             th='<th style="padding:7px 12px;text-align:left;color:#999;font-weight:500">'
+            pending_html=''
+            if pending_items:
+                pending_html=('<div style="background:#fff;border-radius:8px;overflow:hidden">'
+                    f'<div style="background:#f3f3f3;padding:10px 14px;font-weight:600;color:#666;font-size:13px">⚪ 待补充信息（{len(pending_items)}条 · 未填计划日期，不参与排期，请到合同详情里补录）</div>'
+                    f'<table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr style="background:#fafafa">{th}供应商</th>{th}负责人</th>{th}我方公司</th>{th}合同编号</th>{th}节点</th>{th}金额</th></tr></thead>'
+                    f'<tbody>{trs_pending(pending_items)}</tbody></table></div>')
             html=f'''<div style="font-family:'PingFang SC',Arial,sans-serif;max-width:750px;margin:0 auto;background:#f8f7f4;padding:20px">
 <div style="background:#1a1714;border-radius:10px;padding:18px 22px;margin-bottom:16px"><h1 style="color:#fff;margin:0;font-size:17px">{title}</h1><p style="color:rgba(255,255,255,.4);margin:3px 0 0;font-size:11px">{today} 自动发送</p></div>
 <div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap">
@@ -906,7 +922,8 @@ def send_daily_report(supplier_filter=None, emails_override=None, title_override
 <div style="flex:1;min-width:140px;background:#fff;border-radius:8px;padding:14px;border-left:3px solid #555"><div style="font-size:10px;color:#999">全部合同 · 台账总数</div><div style="font-size:26px;font-weight:700;color:#333;margin:3px 0">{total_count}</div><div style="font-size:11px;color:#666">总额 ¥{all_total:,.2f}</div></div>
 </div>
 <div style="background:#fff;border-radius:8px;margin-bottom:12px;overflow:hidden"><div style="background:#fdf0eb;padding:10px 14px;font-weight:600;color:#c54b1e;font-size:13px">🔴 紧急预警（{len(urgent)}条）</div><table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr style="background:#fafafa">{th}供应商</th>{th}负责人</th>{th}我方公司</th>{th}节点</th>{th}应付金额</th>{th}剩余天数</th>{th}到期日</th></tr></thead><tbody>{trs(urgent,"#c54b1e")}</tbody></table></div>
-<div style="background:#fff;border-radius:8px;overflow:hidden"><div style="background:#fef7ea;padding:10px 14px;font-weight:600;color:#b36b00;font-size:13px">🟠 预警提醒（{len(warning)}条）</div><table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr style="background:#fafafa">{th}供应商</th>{th}负责人</th>{th}我方公司</th>{th}节点</th>{th}应付金额</th>{th}剩余天数</th>{th}到期日</th></tr></thead><tbody>{trs(warning,"#b36b00")}</tbody></table></div>
+<div style="background:#fff;border-radius:8px;overflow:hidden;margin-bottom:12px"><div style="background:#fef7ea;padding:10px 14px;font-weight:600;color:#b36b00;font-size:13px">🟠 预警提醒（{len(warning)}条）</div><table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr style="background:#fafafa">{th}供应商</th>{th}负责人</th>{th}我方公司</th>{th}节点</th>{th}应付金额</th>{th}剩余天数</th>{th}到期日</th></tr></thead><tbody>{trs(warning,"#b36b00")}</tbody></table></div>
+{pending_html}
 <p style="color:#aaa;font-size:10px;text-align:center;margin-top:14px">此邮件由系统自动发送，请勿回复</p></div>'''
             msg=MIMEMultipart('alternative')
             msg['Subject']=f"{title} — {today}"
