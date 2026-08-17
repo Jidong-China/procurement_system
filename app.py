@@ -841,13 +841,34 @@ def send_daily_report(supplier_filter=None, emails_override=None, title_override
                 emails=[e.strip() for e in sched['emails'].split(',') if e.strip()]
             sup_clause=" AND supplier LIKE ?" if supplier_filter else ""
             sup_params=(f'%{supplier_filter}%',) if supplier_filter else ()
-            rows=query(f"SELECT * FROM payables WHERE is_paid=0 AND due_date IS NOT NULL{sup_clause}", sup_params)
-            urgent,warning=[],[]
-            for r in rows:
-                n=days_until(r['due_date'])
+            payable_rows=query(f"SELECT * FROM payables WHERE 1=1{sup_clause}", sup_params)
+            # 逐合同+供应商查收付款节点：有节点的按节点逐笔展开（未付且有计划日期的才参与预警），
+            # 没有节点的合同沿用老的 预付款/尾款 + 到期日 字段（向后兼容）
+            def build_items():
+                items=[]
+                for r in payable_rows:
+                    nodes=query("SELECT * FROM payment_nodes WHERE contract_no=? AND supplier=? ORDER BY id",
+                                (r['contract_no'], r['supplier']))
+                    if nodes:
+                        for nd in nodes:
+                            if nd['paid'] or not nd['planned_date']: continue
+                            items.append({'supplier':r['supplier'],'sheet':r['sheet'],'our_company':r['our_company'],
+                                          'amount':nd['planned_amount'] or 0,'due_date':nd['planned_date'],
+                                          'label':nd['item_type'] or '节点'})
+                    else:
+                        if r['is_paid'] or not r['due_date']: continue
+                        items.append({'supplier':r['supplier'],'sheet':r['sheet'],'our_company':r['our_company'],
+                                      'amount':r['tail_payment'] or r['total_amount'] or 0,'due_date':r['due_date'],
+                                      'label':''})
+                return items
+            all_items=build_items()
+            urgent,warning,normal=[],[],[]
+            for it in all_items:
+                n=days_until(it['due_date'])
                 if n is None: continue
-                if 0<=n<=3: urgent.append(dict(r))
-                elif 4<=n<=7: warning.append(dict(r))
+                if 0<=n<=3: urgent.append(it)
+                elif 4<=n<=7: warning.append(it)
+                elif n>7: normal.append(it)
             smtp_host=os.environ.get('SMTP_HOST','smtp.gmail.com')
             smtp_port=int(os.environ.get('SMTP_PORT','587'))
             smtp_user=os.environ.get('SMTP_USER','')
@@ -855,14 +876,11 @@ def send_daily_report(supplier_filter=None, emails_override=None, title_override
             if not smtp_user or not smtp_pass: return False,'SMTP未配置'
             def fmt(v): return f'¥{v:,.2f}' if v else '—'
             def trs(items,color):
-                if not items: return '<tr><td colspan="6" style="text-align:center;color:#999;padding:10px">暂无</td></tr>'
-                return ''.join(f'<tr><td style="padding:7px 12px;border-bottom:1px solid #f0f0f0">{r["supplier"]}</td><td style="padding:7px 12px;border-bottom:1px solid #f0f0f0;color:#666">{r["sheet"]}</td><td style="padding:7px 12px;border-bottom:1px solid #f0f0f0;color:#666;font-size:11px">{r["our_company"] or "—"}</td><td style="padding:7px 12px;border-bottom:1px solid #f0f0f0;font-family:monospace">{fmt(r["tail_payment"] or r["total_amount"])}</td><td style="padding:7px 12px;border-bottom:1px solid #f0f0f0;color:{color};font-weight:600">{days_until(r["due_date"])}天后</td><td style="padding:7px 12px;border-bottom:1px solid #f0f0f0;color:#999">{r["due_date"] or "—"}</td></tr>' for r in items)
-            ut=sum((r['tail_payment'] or r['total_amount'] or 0) for r in urgent)
-            wt=sum((r['tail_payment'] or r['total_amount'] or 0) for r in warning)
-            # 付款正常 7天以上
-            normal_rows=query(f"SELECT * FROM payables WHERE is_paid=0 AND due_date IS NOT NULL{sup_clause}", sup_params)
-            normal=[dict(r) for r in normal_rows if days_until(r['due_date']) is not None and days_until(r['due_date'])>7]
-            nt=sum((r['tail_payment'] or r['total_amount'] or 0) for r in normal)
+                if not items: return '<tr><td colspan="7" style="text-align:center;color:#999;padding:10px">暂无</td></tr>'
+                return ''.join(f'<tr><td style="padding:7px 12px;border-bottom:1px solid #f0f0f0">{r["supplier"]}</td><td style="padding:7px 12px;border-bottom:1px solid #f0f0f0;color:#666">{r["sheet"]}</td><td style="padding:7px 12px;border-bottom:1px solid #f0f0f0;color:#666;font-size:11px">{r["our_company"] or "—"}</td><td style="padding:7px 12px;border-bottom:1px solid #f0f0f0;color:#888;font-size:11px">{r["label"] or "—"}</td><td style="padding:7px 12px;border-bottom:1px solid #f0f0f0;font-family:monospace">{fmt(r["amount"])}</td><td style="padding:7px 12px;border-bottom:1px solid #f0f0f0;color:{color};font-weight:600">{days_until(r["due_date"])}天后</td><td style="padding:7px 12px;border-bottom:1px solid #f0f0f0;color:#999">{r["due_date"] or "—"}</td></tr>' for r in items)
+            ut=sum(r['amount'] for r in urgent)
+            wt=sum(r['amount'] for r in warning)
+            nt=sum(r['amount'] for r in normal)
             # 全部台账
             all_rows=query(f"SELECT * FROM payables WHERE is_paid=0{sup_clause}", sup_params)
             all_total=sum((r['total_amount'] or 0) for r in all_rows)
@@ -872,7 +890,7 @@ def send_daily_report(supplier_filter=None, emails_override=None, title_override
                 cos={}
                 for r in items:
                     co=r.get('our_company') or r['sheet'] or '其他'
-                    cos[co]=cos.get(co,0)+(r['tail_payment'] or r['total_amount'] or 0)
+                    cos[co]=cos.get(co,0)+r['amount']
                 short=lambda s:s.replace('有限公司','').replace('进出口','').replace('集团','').replace('股份','').strip()[:6]
                 lines=sorted(cos.items(),key=lambda x:-x[1])
                 return ''.join(f'<div style="display:flex;justify-content:space-between;font-size:10px;color:#888;margin-top:3px;padding-top:3px;border-top:1px dashed #eee"><span>{short(c)}</span><span style="font-family:monospace">¥{v:,.2f}</span></div>' for c,v in lines if v>0)
@@ -887,8 +905,8 @@ def send_daily_report(supplier_filter=None, emails_override=None, title_override
 <div style="flex:1;min-width:140px;background:#fff;border-radius:8px;padding:14px;border-left:3px solid #0d6b55"><div style="font-size:10px;color:#999">付款正常 7天以上</div><div style="font-size:26px;font-weight:700;color:#0d6b55;margin:3px 0">{len(normal)}</div><div style="font-size:11px;color:#666;margin-bottom:4px">应付 ¥{nt:,.2f}</div>{co_breakdown(normal,"")}</div>
 <div style="flex:1;min-width:140px;background:#fff;border-radius:8px;padding:14px;border-left:3px solid #555"><div style="font-size:10px;color:#999">全部合同 · 台账总数</div><div style="font-size:26px;font-weight:700;color:#333;margin:3px 0">{total_count}</div><div style="font-size:11px;color:#666">总额 ¥{all_total:,.2f}</div></div>
 </div>
-<div style="background:#fff;border-radius:8px;margin-bottom:12px;overflow:hidden"><div style="background:#fdf0eb;padding:10px 14px;font-weight:600;color:#c54b1e;font-size:13px">🔴 紧急预警（{len(urgent)}条）</div><table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr style="background:#fafafa">{th}供应商</th>{th}负责人</th>{th}我方公司</th>{th}应付金额</th>{th}剩余天数</th>{th}到期日</th></tr></thead><tbody>{trs(urgent,"#c54b1e")}</tbody></table></div>
-<div style="background:#fff;border-radius:8px;overflow:hidden"><div style="background:#fef7ea;padding:10px 14px;font-weight:600;color:#b36b00;font-size:13px">🟠 预警提醒（{len(warning)}条）</div><table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr style="background:#fafafa">{th}供应商</th>{th}负责人</th>{th}我方公司</th>{th}应付金额</th>{th}剩余天数</th>{th}到期日</th></tr></thead><tbody>{trs(warning,"#b36b00")}</tbody></table></div>
+<div style="background:#fff;border-radius:8px;margin-bottom:12px;overflow:hidden"><div style="background:#fdf0eb;padding:10px 14px;font-weight:600;color:#c54b1e;font-size:13px">🔴 紧急预警（{len(urgent)}条）</div><table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr style="background:#fafafa">{th}供应商</th>{th}负责人</th>{th}我方公司</th>{th}节点</th>{th}应付金额</th>{th}剩余天数</th>{th}到期日</th></tr></thead><tbody>{trs(urgent,"#c54b1e")}</tbody></table></div>
+<div style="background:#fff;border-radius:8px;overflow:hidden"><div style="background:#fef7ea;padding:10px 14px;font-weight:600;color:#b36b00;font-size:13px">🟠 预警提醒（{len(warning)}条）</div><table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr style="background:#fafafa">{th}供应商</th>{th}负责人</th>{th}我方公司</th>{th}节点</th>{th}应付金额</th>{th}剩余天数</th>{th}到期日</th></tr></thead><tbody>{trs(warning,"#b36b00")}</tbody></table></div>
 <p style="color:#aaa;font-size:10px;text-align:center;margin-top:14px">此邮件由系统自动发送，请勿回复</p></div>'''
             msg=MIMEMultipart('alternative')
             msg['Subject']=f"{title} — {today}"
