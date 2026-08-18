@@ -1047,19 +1047,99 @@ def send_project_report(supplier_filter=None, emails_override=None, title_overri
         except Exception as e:
             return False, str(e)
 
+def send_yj_node_ledger_report(supplier_filter, emails_override=None, title_override=None):
+    """供应商专属·付款节点全量明细报告：不按3天/7天预警阈值过滤，
+    列出该供应商名下每个合同的全部收付款节点（已付+未付，含金额和日期），
+    用于日常掌握整体付款进度，而不是只看"快到期"的。"""
+    with app.app_context():
+        try:
+            emails=[e.strip() for e in (emails_override or '').split(',') if e.strip()]
+            if not emails: return False,'无收件人'
+            smtp_host=os.environ.get('SMTP_HOST','smtp.gmail.com')
+            smtp_port=int(os.environ.get('SMTP_PORT','587'))
+            smtp_user=os.environ.get('SMTP_USER','')
+            smtp_pass=os.environ.get('SMTP_PASS','')
+            if not smtp_user or not smtp_pass: return False,'SMTP未配置'
+            payable_rows=query("SELECT * FROM payables WHERE supplier LIKE ?", (f'%{supplier_filter}%',))
+            def fmt(v): return f'¥{v:,.2f}' if v else '—'
+            unpaid_total=0; paid_total=0; unpaid_count=0; contract_count=0
+            blocks=''
+            th='<th style="padding:6px 10px;text-align:left;font-size:11px;color:#999;font-weight:500">'
+            for r in payable_rows:
+                nodes=query("SELECT * FROM payment_nodes WHERE contract_no=? AND supplier=? ORDER BY id",
+                            (r['contract_no'], r['supplier']))
+                if not nodes and not (r['prepayment'] or r['tail_payment']):
+                    continue  # 既没节点也没老字段金额，没什么可报的，跳过
+                contract_count+=1
+                rows_list=list(nodes)
+                if not rows_list:
+                    # 向后兼容：没有节点表数据的合同，用老的预付款/尾款字段拼出两行
+                    if r['prepayment']:
+                        rows_list.append({'item_type':'预付款','planned_date':None,'planned_amount':r['prepayment'],
+                                          'paid':r['prepayment_paid'],'paid_date':None})
+                    if r['tail_payment']:
+                        rows_list.append({'item_type':'尾款','planned_date':r['due_date'],'planned_amount':r['tail_payment'],
+                                          'paid':r['tail_paid'],'paid_date':None})
+                # 排序：有日期的按日期升序，没日期的排最后
+                rows_list=sorted(rows_list, key=lambda n: (n['planned_date'] is None, n['planned_date'] or ''))
+                node_trs=''
+                for nd in rows_list:
+                    is_paid = bool(nd['paid'])
+                    amt = nd['planned_amount'] or 0
+                    if is_paid: paid_total+=amt
+                    else: unpaid_total+=amt; unpaid_count+=1
+                    badge = ('<span style="color:#0d6b55;background:#e6f4ef;padding:1px 8px;border-radius:999px;font-size:11px;font-weight:600">已付</span>'
+                             if is_paid else
+                             '<span style="color:#b36b00;background:#fef3e0;padding:1px 8px;border-radius:999px;font-size:11px;font-weight:600">待付</span>')
+                    node_trs += (f'<tr><td style="padding:6px 10px;border-bottom:1px solid #f0f0f0;font-size:12px">{nd["item_type"] or "节点"}</td>'
+                                f'<td style="padding:6px 10px;border-bottom:1px solid #f0f0f0;font-size:12px;color:#666">{nd["planned_date"] or "日期待定"}</td>'
+                                f'<td style="padding:6px 10px;border-bottom:1px solid #f0f0f0;text-align:center">{badge}</td>'
+                                f'<td style="padding:6px 10px;border-bottom:1px solid #f0f0f0;font-family:monospace;font-size:12px">{fmt(amt) if amt else "金额待填"}</td>'
+                                f'<td style="padding:6px 10px;border-bottom:1px solid #f0f0f0;font-size:11px;color:#999">{nd["paid_date"] or "—"}</td></tr>')
+                blocks += (
+                    '<div style="background:#fff;border-radius:8px;margin-bottom:12px;overflow:hidden">'
+                    f'<div style="background:#f5f5f3;padding:9px 14px;display:flex;justify-content:space-between;align-items:center">'
+                    f'<span style="font-weight:600;font-size:13px">{r["contract_no"]}</span>'
+                    f'<span style="font-size:11px;color:#999">{r["supplier"]} · {r["our_company"] or "—"}</span></div>'
+                    '<table style="width:100%;border-collapse:collapse">'
+                    f'<thead><tr style="background:#fafafa">{th}节点</th>{th}计划日期</th>{th}状态</th>{th}金额</th>{th}实付日期</th></tr></thead>'
+                    f'<tbody>{node_trs}</tbody></table></div>'
+                )
+            today=datetime.now().strftime('%Y年%m月%d日')
+            title=title_override or f'{supplier_filter} · 付款节点明细'
+            html=f'''<div style="font-family:'PingFang SC',Arial,sans-serif;max-width:750px;margin:0 auto;background:#f8f7f4;padding:20px">
+<div style="background:#1a1714;border-radius:10px;padding:18px 22px;margin-bottom:16px"><h1 style="color:#fff;margin:0;font-size:17px">{title}</h1><p style="color:rgba(255,255,255,.4);margin:3px 0 0;font-size:11px">{today} 自动发送 · 展示全部节点，不受3天/7天预警阈值限制</p></div>
+<div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap">
+<div style="flex:1;min-width:140px;background:#fff;border-radius:8px;padding:14px;border-left:3px solid #555"><div style="font-size:10px;color:#999">合同数</div><div style="font-size:24px;font-weight:700;color:#333;margin:3px 0">{contract_count}</div></div>
+<div style="flex:1;min-width:140px;background:#fff;border-radius:8px;padding:14px;border-left:3px solid #b36b00"><div style="font-size:10px;color:#999">待付节点数</div><div style="font-size:24px;font-weight:700;color:#b36b00;margin:3px 0">{unpaid_count}</div><div style="font-size:11px;color:#666">合计 ¥{unpaid_total:,.2f}</div></div>
+<div style="flex:1;min-width:140px;background:#fff;border-radius:8px;padding:14px;border-left:3px solid #0d6b55"><div style="font-size:10px;color:#999">已付金额</div><div style="font-size:24px;font-weight:700;color:#0d6b55;margin:3px 0">¥{paid_total:,.2f}</div></div>
+</div>
+{blocks}
+<p style="color:#aaa;font-size:10px;text-align:center;margin-top:14px">此邮件由系统自动发送，请勿回复</p></div>'''
+            msg=MIMEMultipart('alternative')
+            msg['Subject']=f"{title} — {today}"
+            msg['From']=smtp_user; msg['To']=', '.join(emails)
+            msg.attach(MIMEText(html,'html','utf-8'))
+            with smtplib.SMTP(smtp_host,smtp_port) as srv:
+                srv.ehlo(); srv.starttls(); srv.login(smtp_user,smtp_pass)
+                srv.sendmail(smtp_user,emails,msg.as_string())
+            return True,f'已发送至 {", ".join(emails)}（{contract_count}个合同，{unpaid_count}笔待付）'
+        except Exception as e:
+            return False,str(e)
+
 def send_yj_daily_report():
-    """按供应商关键词筛选的专属日报（应付款预警 + 项目跟进），独立于主日报收件人。"""
+    """按供应商关键词筛选的专属日报（付款节点全量明细 + 项目跟进），独立于主日报收件人。"""
     with app.app_context():
         sched = query("SELECT * FROM report_schedule WHERE id=1", one=True)
         if not sched or not sched['yj_enabled'] or not sched['yj_emails']:
             return False, '供应商专属日报未启用或无收件人'
         keyword = (sched['yj_keyword'] or '').strip() or '甬嘉'
         emails = sched['yj_emails']
-        ok1, msg1 = send_daily_report(supplier_filter=keyword, emails_override=emails,
-                                       title_override=f'{keyword} · 应付款预警日报')
+        ok1, msg1 = send_yj_node_ledger_report(keyword, emails_override=emails,
+                                       title_override=f'{keyword} · 付款节点明细')
         ok2, msg2 = send_project_report(supplier_filter=keyword, emails_override=emails,
                                          title_override=f'{keyword} · 项目跟进状态日报')
-        return (ok1 or ok2), f'应付款: {msg1}；项目跟进: {msg2}'
+        return (ok1 or ok2), f'付款节点明细: {msg1}；项目跟进: {msg2}'
 
 
 # ── Scheduler ─────────────────────────────────────────────────────────────────
